@@ -2,7 +2,7 @@
 
 A single-file web app for running a team steps challenge — daily step logging, weekly proof photos, teams, a leaderboard, bonus challenges, and an admin console. Sign-in is Google or Microsoft only; a user's first sign-in creates their profile, and admins can promote/demote other users from the Admin tab.
 
-Live site (after GitHub Pages finishes deploying): **https://itzemm.github.io/OH-APAC-steps-challenge/**
+Live site (after GitHub Pages finishes deploying): **https://itzemm.github.io/oh-apac-steps-challenge/**
 
 ## How it's built
 
@@ -34,7 +34,7 @@ This code is pushed and (once Pages finishes its first build) live, but a few th
    firebase deploy --only firestore:rules
    ```
    Run this from inside this project folder.
-5. **Authorize the live domain** for sign-in: Authentication → Settings → Authorized domains → add `itzemm.github.io`. (`localhost` is already authorized by default, for local testing.)
+5. **Authorize the live domain** for sign-in: Authentication → Settings → Authorized domains → add `itzemm.github.io`. This one domain covers every GitHub Pages site under this account, including this repo's. (`localhost` is already authorized by default, for local testing.)
 
 Until steps 1–5 are done, the sign-in buttons will show a "sign-in method isn't enabled yet" / "domain isn't authorized" message rather than actually failing silently.
 
