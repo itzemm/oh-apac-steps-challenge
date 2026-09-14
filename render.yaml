@@ -5,3 +5,22 @@ services:
     buildCommand: "echo 'static site, no build step needed'"
     staticPublishPath: .
     pullRequestPreviewsEnabled: false
+
+  # Holds the Gemini API key server-side for the admin "AI photo audit"
+  # feature — the static site above never sees the key. GEMINI_API_KEY is
+  # intentionally left unset here (sync: false): set it in the Render
+  # dashboard for this service after it's created, not in this file.
+  - type: web
+    name: oh-apac-steps-audit
+    runtime: node
+    rootDir: audit-proxy
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: FIREBASE_PROJECT_ID
+        value: oh-apac-steps-challenge
+      - key: ALLOWED_ORIGINS
+        value: https://itzemm.github.io,https://oh-apac-steps-challenge.onrender.com
+    pullRequestPreviewsEnabled: false

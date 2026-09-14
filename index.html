@@ -226,6 +226,12 @@ const googleProvider = new GoogleAuthProvider();
 // Additional admins can then be promoted from the Admin tab.
 const OWNER_ADMIN_EMAIL = 'chenjiayi25@gmail.com';
 
+// Small server-side proxy that holds the Gemini API key (see /audit-proxy in
+// this repo). The browser never sees the key — it sends the proof photo and
+// claimed steps here, the proxy calls Gemini, and returns the parsed result.
+// The proxy verifies the caller's Firebase ID token before doing anything.
+const AUDIT_PROXY_URL = 'https://oh-apac-steps-audit.onrender.com/api/audit';
+
 const TEAM_SIZE_LIMIT = 5;
 const DAILY_STEP_CAP = 40000;
 const DEFAULT_CONFIG = { name: 'OH APAC Steps Challenge', startDate: null, weeks: 3, stepsLimit: null };
@@ -374,6 +380,7 @@ const App = {
     myFunFactsFor: null,
     teamFunFacts: null,
     teamFunFactsFor: null,
+    auditResults: {},
     bonusForm: { title:'', description:'', points:'', type:'individual' }
   },
 
@@ -934,13 +941,73 @@ const App = {
   async resetChallenge(){
     if(!confirm("This clears everyone's steps and proof, and the start date. This cannot be undone. Continue?")) return;
     const snap = await getDocs(collection(db,'steps'));
-    await Promise.all(snap.docs.map(d => updateDoc(d.ref, { days:{}, weekProof:{} })));
+    await Promise.all(snap.docs.map(d => updateDoc(d.ref, { days:{}, weekProof:{}, verified:{} })));
     this.state.config.startDate = null;
     await this.saveConfig();
     this.state.mySteps.days = {};
     this.state.mySteps.weekProof = {};
     this.state.allSteps = {};
     this.state.allStepsLoaded = false;
+    this.state.auditResults = {};
+    this.render();
+  },
+
+  // ---------- Audit & verify ----------
+  pickRandomAudit(){
+    const uids = Object.keys(this.state.users);
+    if(!uids.length){ alert('No participants yet.'); return; }
+    const uid = uids[Math.floor(Math.random()*uids.length)];
+    this.openModal({ type:'userDetail', uid });
+  },
+  async setWeekVerified(uid, weekIndex, verified){
+    const rec = this.state.allSteps[uid];
+    if(!rec){ alert("This person hasn't logged any steps yet."); return; }
+    const verifiedMap = { ...(rec.verified || {}) };
+    if(verified){
+      verifiedMap[weekIndex] = { verifiedBy: this.state.identity.uid, verifiedByName: this.state.identity.name, verifiedAt: new Date().toISOString() };
+    } else {
+      delete verifiedMap[weekIndex];
+    }
+    await updateDoc(doc(db,'steps',uid), { verified: verifiedMap });
+    rec.verified = verifiedMap;
+    this.render();
+  },
+  async runAiAudit(uid, weekIndex){
+    const auditKey = uid + ':' + weekIndex;
+    this.state.auditResults[auditKey] = { loading:true };
+    this.render();
+    try{
+      const rec = this.state.allSteps[uid];
+      const proofEntry = this.weekProofOf(rec, weekIndex);
+      if(!proofEntry) throw new Error('No proof photo uploaded for this week.');
+      const match = /^data:([^;]+);base64,(.*)$/s.exec(proofEntry.proof);
+      if(!match) throw new Error('Could not read the proof image.');
+      const [, mimeType, imageBase64] = match;
+
+      const cfg = this.state.config;
+      const claims = [];
+      for(let d=0; d<7; d++){
+        const date = this.addDays(cfg.startDate, weekIndex*7 + d);
+        const entry = rec.days[date];
+        claims.push({ date, claimedSteps: entry ? entry.steps : null });
+      }
+      const prompt = `You are auditing a workplace step-count challenge. A participant uploaded this photo as proof for the week of ${claims[0].date} to ${claims[6].date}. They separately logged these daily step counts themselves: ${JSON.stringify(claims)}. Look closely at the photo (it's likely a phone health app or pedometer screenshot) and identify any step counts and dates it actually shows. Compare what you see against what they logged. Respond with ONLY JSON in this exact shape, no other text: {"summary": "one sentence overview", "flags": [{"date": "YYYY-MM-DD", "claimedSteps": number or null, "seenInPhoto": number or null, "issue": "short description of the mismatch, or an empty string if that date matches or the photo doesn't cover it"}]}. Include one entry in "flags" for every date listed above.`;
+
+      const idToken = await auth.currentUser.getIdToken();
+      const res = await fetch(AUDIT_PROXY_URL, {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json', 'Authorization':'Bearer ' + idToken },
+        body: JSON.stringify({ imageBase64, mimeType, prompt })
+      });
+      const data = await res.json();
+      if(!res.ok) throw new Error(data.error || 'Audit request failed.');
+      let parsed;
+      try{ parsed = JSON.parse(data.raw); }
+      catch(e){ throw new Error("Couldn't parse the AI's response."); }
+      this.state.auditResults[auditKey] = { loading:false, result:parsed };
+    }catch(e){
+      this.state.auditResults[auditKey] = { loading:false, error: e.message || 'Audit failed.' };
+    }
     this.render();
   },
 
@@ -1061,16 +1128,23 @@ const App = {
 
     const funHtml = this.renderFunStats(this.getFunFacts('my', myTotal));
 
-    const bonusList = Object.values(this.state.bonus).filter(b => b.type==='individual' && b.active !== false);
+    const myTeam = this.getMyTeam();
+    const bonusList = Object.values(this.state.bonus).filter(b => b.active !== false);
     let bonusHtml = '';
     if(bonusList.length){
-      bonusHtml = `<div class="panel"><h3>Bonus challenges for you</h3>` + bonusList.map(b => {
-        const awarded = b.completed.includes(this.state.identity.uid);
+      bonusHtml = `<div class="panel"><h3>Bonus challenges available</h3>` + bonusList.map(b => {
+        const isTeamType = b.type === 'team';
+        const awarded = isTeamType
+          ? (myTeam ? b.completed.includes(myTeam.id) : false)
+          : b.completed.includes(this.state.identity.uid);
+        const statusTag = isTeamType && !myTeam
+          ? `<span class="tag tag-upcoming">Join a team to work toward this</span>`
+          : `<span class="tag ${awarded?'tag-awarded':'tag-pending'}">${awarded?'Awarded':'Not yet awarded'}</span>`;
         return `<div class="challenge-card"><div class="ctop">
-          <div><span class="ctitle">${b.title}</span><span class="type-pill">Individual</span>${b.description ? `<div class="cdesc">${b.description}</div>` : ''}</div>
+          <div><span class="ctitle">${b.title}</span><span class="type-pill">${isTeamType?'Team':'Individual'}</span>${b.description ? `<div class="cdesc">${b.description}</div>` : ''}</div>
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
             <span class="points-pill">${b.points} pts</span>
-            <span class="tag ${awarded?'tag-awarded':'tag-pending'}">${awarded?'Awarded':'Not yet awarded'}</span>
+            ${statusTag}
           </div>
         </div></div>`;
       }).join('') + `</div>`;
@@ -1322,7 +1396,7 @@ const App = {
     users.sort((a,b) => b.issues.length - a.issues.length || a.u.name.localeCompare(b.u.name));
 
     html += `<div class="panel"><h3>Participants (${users.length}) <span style="font-weight:400;font-size:12px;color:var(--ink-soft);">sorted by missing proof</span></h3>`;
-    html += `<div style="margin-bottom:12px;"><button class="btn btn-sm" id="btn-export-participants">Export participants (CSV)</button> <button class="btn btn-sm" id="btn-export-teams">Export teams (CSV)</button></div>`;
+    html += `<div style="margin-bottom:12px;"><button class="btn btn-sm" id="btn-export-participants">Export participants (CSV)</button> <button class="btn btn-sm" id="btn-export-teams">Export teams (CSV)</button> <button class="btn btn-sm" id="btn-random-audit">🎲 Randomly select someone to audit</button></div>`;
     if(!cfg.startDate){
       html += `<div class="empty">Set a start date above to begin tracking weekly status.</div></div>`;
     } else {
@@ -1340,10 +1414,11 @@ const App = {
           const proof = this.weekProofOf(rec, w);
           const wStatus = this.getWeekStatus(w);
           let cell;
+          const verified = rec.verified && rec.verified[w];
           if(!weekTotal){
             cell = wStatus === 'locked' ? '<span style="color:var(--rust);">missing</span>' : (wStatus==='editable' ? 'pending' : '—');
           } else {
-            cell = weekTotal.toLocaleString() + (proof ? ' ✓' : ' <span style="color:var(--rust);">⚠ no proof</span>');
+            cell = weekTotal.toLocaleString() + (proof ? ' ✓' : ' <span style="color:var(--rust);">⚠ no proof</span>') + (verified ? ' <span style="color:var(--forest);">✓ verified</span>' : '');
           }
           html += `<td class="week-cell">${cell}</td>`;
         }
@@ -1404,8 +1479,9 @@ const App = {
             <button class="btn btn-sm btn-danger" data-role="delete-bonus" data-id="${b.id}">Delete</button>
           </div>
         </div>
+        ${targets.length > 8 ? `<div class="field" style="margin-bottom:0;margin-top:10px;max-width:280px;"><input type="text" data-role="bonus-filter" placeholder="Filter by ${b.type==='individual'?'name':'team name'}…"></div>` : ''}
         <div class="award-grid">
-          ${targets.length ? targets.map(t => `<div class="award-chip ${b.completed.includes(t.id)?'awarded':''}" data-role="toggle-award" data-id="${b.id}" data-target="${t.id}">${b.completed.includes(t.id)?'✓ ':''}${t.name}</div>`).join('') : `<span class="empty" style="padding:0;">No ${b.type==='individual'?'participants':'teams'} yet.</span>`}
+          ${targets.length ? targets.map(t => `<div class="award-chip ${b.completed.includes(t.id)?'awarded':''}" data-role="toggle-award" data-id="${b.id}" data-target="${t.id}" data-name="${t.name.toLowerCase()}">${b.completed.includes(t.id)?'✓ ':''}${t.name}</div>`).join('') : `<span class="empty" style="padding:0;">No ${b.type==='individual'?'participants':'teams'} yet.</span>`}
         </div>
       </div>`;
     });
@@ -1426,27 +1502,63 @@ const App = {
       const u = this.state.users[m.uid];
       const rec = this.state.allSteps[m.uid] || { days:{}, weekProof:{} };
       const cfg = this.state.config;
-      let weekRows = '';
+      const isAdmin = (this.state.users[this.state.identity.uid] || {}).role === 'admin';
+
+      let weekBlocks = '';
       for(let w=0; w<cfg.weeks; w++){
         const weekTotal = this.totalStepsInRange(rec, w);
         const proof = this.weekProofOf(rec, w);
-        weekRows += `<tr><td>Week ${w+1}</td><td>${weekTotal ? weekTotal.toLocaleString() : '—'}</td><td>${proof ? `<img class="thumb" src="${proof.proof}" data-role="thumb" data-src="${proof.proof}">` : '—'}</td></tr>`;
-      }
-      let dayRows = '';
-      if(cfg.startDate){
-        for(let i=0; i<cfg.weeks*7; i++){
-          const date = this.addDays(cfg.startDate, i);
-          const entry = rec.days[date];
-          dayRows += `<tr><td>${this.formatDate(date)}</td><td>${entry ? entry.steps.toLocaleString() : '—'}</td></tr>`;
+        const verified = rec.verified && rec.verified[w];
+
+        let dayRows = '';
+        if(cfg.startDate){
+          for(let d=0; d<7; d++){
+            const date = this.addDays(cfg.startDate, w*7 + d);
+            const entry = rec.days[date];
+            dayRows += `<tr><td>${this.formatDate(date)}</td><td>${entry ? entry.steps.toLocaleString() : '—'}</td></tr>`;
+          }
         }
+
+        const auditKey = m.uid + ':' + w;
+        const audit = this.state.auditResults[auditKey];
+        let auditHtml = '';
+        if(audit && audit.loading){
+          auditHtml = `<div class="loading" style="padding:8px 0;">Checking photo against logged steps…</div>`;
+        } else if(audit && audit.error){
+          auditHtml = `<div class="notice" style="margin:10px 0;">${audit.error}</div>`;
+        } else if(audit && audit.result){
+          const flags = (audit.result.flags || []).filter(f => f.issue);
+          auditHtml = `<div style="margin:10px 0;font-size:13px;">
+            ${audit.result.summary ? `<div style="margin-bottom:6px;color:var(--ink-soft);">${audit.result.summary}</div>` : ''}
+            ${flags.length
+              ? flags.map(f => `<div class="tag tag-flag" style="display:block;margin-bottom:4px;">⚠ ${f.date}: claimed ${f.claimedSteps ?? '—'}, photo shows ${f.seenInPhoto ?? 'unclear'} — ${f.issue}</div>`).join('')
+              : `<span class="tag tag-awarded">No mismatches found</span>`}
+          </div>`;
+        }
+
+        weekBlocks += `<div class="week-card" style="margin-top:12px;">
+          <div class="wtop">
+            <div><span class="wname">Week ${w+1}</span></div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              ${weekTotal?`<span class="steps-readout">${weekTotal.toLocaleString()} steps</span>`:''}
+              ${verified ? `<span class="tag tag-awarded">✓ Verified</span>` : ''}
+            </div>
+          </div>
+          <div class="wbody" style="margin-bottom:6px;">
+            ${proof ? `<img class="thumb" src="${proof.proof}" data-role="thumb" data-src="${proof.proof}">` : `<div class="thumb-placeholder">no proof</div>`}
+            ${isAdmin ? `<button class="btn btn-sm" data-role="audit-week" data-uid="${m.uid}" data-week="${w}" ${(!proof || !weekTotal) ? 'disabled' : ''}>🤖 Check with AI</button>` : ''}
+            ${isAdmin ? `<button class="btn btn-sm ${verified?'btn-danger':'btn-primary'}" data-role="toggle-verified" data-uid="${m.uid}" data-week="${w}">${verified ? 'Remove verified stamp' : 'Mark verified'}</button>` : ''}
+          </div>
+          ${auditHtml}
+          ${dayRows ? `<table><thead><tr><th>Day</th><th>Steps</th></tr></thead><tbody>${dayRows}</tbody></table>` : ''}
+        </div>`;
       }
+
       return `<div class="modal-overlay" data-role="modal-overlay"><div class="modal">
         <button class="modal-close" data-role="modal-close">&times;</button>
         <div class="serif" style="font-size:18px;">${u.name}</div>
         <div style="color:var(--ink-soft);font-size:13px;">${u.email}</div>
-        <table><thead><tr><th>Week</th><th>Total steps</th><th>Proof</th></tr></thead><tbody>${weekRows}</tbody></table>
-        <div class="serif" style="font-size:14px;margin-top:16px;">Daily breakdown</div>
-        <table><thead><tr><th>Day</th><th>Steps</th></tr></thead><tbody>${dayRows}</tbody></table>
+        ${weekBlocks}
       </div></div>`;
     }
     return '';
@@ -1480,9 +1592,18 @@ const App = {
     if(exportP) exportP.addEventListener('click', () => this.exportParticipantsCSV());
     const exportT = document.getElementById('btn-export-teams');
     if(exportT) exportT.addEventListener('click', () => this.exportTeamsCSV());
+    const randomAuditBtn = document.getElementById('btn-random-audit');
+    if(randomAuditBtn) randomAuditBtn.addEventListener('click', () => this.pickRandomAudit());
 
     root.querySelectorAll('[data-role="toggle-role"]').forEach(el => el.addEventListener('click', () => this.setRole(el.dataset.uid, el.dataset.newrole)));
     root.querySelectorAll('[data-role="view-user"]').forEach(el => el.addEventListener('click', () => this.openModal({ type:'userDetail', uid: el.dataset.uid })));
+    root.querySelectorAll('[data-role="audit-week"]').forEach(el => el.addEventListener('click', () => this.runAiAudit(el.dataset.uid, Number(el.dataset.week))));
+    root.querySelectorAll('[data-role="toggle-verified"]').forEach(el => el.addEventListener('click', () => {
+      const rec = this.state.allSteps[el.dataset.uid];
+      const w = Number(el.dataset.week);
+      const already = !!(rec && rec.verified && rec.verified[w]);
+      this.setWeekVerified(el.dataset.uid, w, !already);
+    }));
 
     root.querySelectorAll('[data-role="modal-close"], [data-role="modal-overlay"]').forEach(el => {
       el.addEventListener('click', (e) => { if(e.target === el) this.closeModal(); });
@@ -1508,6 +1629,16 @@ const App = {
     root.querySelectorAll('[data-role="toggle-bonus-active"]').forEach(el => el.addEventListener('click', () => this.toggleBonusActive(el.dataset.id)));
     root.querySelectorAll('[data-role="delete-bonus"]').forEach(el => el.addEventListener('click', () => this.deleteBonusChallenge(el.dataset.id)));
     root.querySelectorAll('[data-role="toggle-award"]').forEach(el => el.addEventListener('click', () => this.toggleAward(el.dataset.id, el.dataset.target)));
+    root.querySelectorAll('[data-role="bonus-filter"]').forEach(input => {
+      input.addEventListener('input', () => {
+        const q = input.value.trim().toLowerCase();
+        const grid = input.closest('.challenge-card').querySelector('.award-grid');
+        if(!grid) return;
+        grid.querySelectorAll('.award-chip').forEach(chip => {
+          chip.style.display = (q !== '' && !chip.dataset.name.includes(q)) ? 'none' : '';
+        });
+      });
+    });
   }
 };
 

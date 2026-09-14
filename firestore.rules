@@ -56,10 +56,15 @@ service cloud.firestore {
     }
 
     // Per-user step logs, keyed by uid. Everyone can read (leaderboard/team
-    // views need everyone's totals); only the owner or an admin can write.
+    // views need everyone's totals). The owner can write their own days/proof,
+    // but the "verified" audit stamp can only ever be set by an admin — never
+    // by the participant themselves, even by calling Firestore directly.
     match /steps/{uid} {
       allow read: if isSignedIn();
-      allow write: if isSelf(uid) || isAdmin();
+      allow create: if isSelf(uid) && !('verified' in request.resource.data);
+      allow update: if isAdmin()
+        || (isSelf(uid) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['verified']));
+      allow delete: if false;
     }
   }
 }
