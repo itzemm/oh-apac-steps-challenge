@@ -107,7 +107,7 @@ img{max-width:100%;}
 .race-row:last-child{margin-bottom:0;}
 .race-name{width:80px;flex-shrink:0;font-size:12px;color:var(--ink-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .race-lane-track{position:relative;flex:1;min-width:0;height:40px;border-radius:8px;
-  background:linear-gradient(180deg,#BFE3E8 0%,#8FCBD6 55%,#6FB8C6 100%);
+  background:linear-gradient(180deg,var(--forest-tint) 0%,#C3D3B4 55%,#A3BE92 100%);
   border:1px solid var(--line);overflow:visible;}
 .race-lane-otter{position:absolute;top:1px;width:36px;height:36px;object-fit:contain;
   transform:translateX(-50%);transition:left 0.6s ease;
@@ -1388,7 +1388,7 @@ const App = {
       <div class="subtabs">${subtabs}</div>
       <div class="panel race-panel">
         <img class="lb-hero" src="assets/otters/otter-selfie.png" alt="">
-        <h3>🏁 The Race</h3>
+        <h3>The Race</h3>
         <div class="race-caption">Teams</div>
         ${this.renderRaceTrack(teams, 'assets/otters/otter-sg.png')}
         <div class="race-caption">Individuals</div>
