@@ -227,7 +227,128 @@ const googleProvider = new GoogleAuthProvider();
 const OWNER_ADMIN_EMAIL = 'chenjiayi25@gmail.com';
 
 const TEAM_SIZE_LIMIT = 5;
+const DAILY_STEP_CAP = 40000;
 const DEFAULT_CONFIG = { name: 'OH APAC Steps Challenge', startDate: null, weeks: 3, stepsLimit: null };
+
+// ---------- "Did you know?" fun facts ----------
+// Every ref is compared against a derived quantity (distance walked, calories
+// burned, "stood on end" height, walking time, or the raw step count) and
+// dropped into a random sentence template. refs × templates gives well over
+// 1,000 distinct fact combinations, and 1-2 are drawn at random each time the
+// underlying total changes — see pickFunFacts().
+const FUN_FACT_TEMPLATES = [
+  "That's about {comparison}.",
+  "Which is roughly {comparison}.",
+  "Believe it or not, that's {comparison}.",
+  "Fun fact: you're at {comparison}.",
+  "Put another way, that's {comparison}.",
+  "So far, that adds up to {comparison}.",
+  "Not bad — that's {comparison}.",
+  "In other words: {comparison}.",
+  "That works out to {comparison}.",
+  "For reference, that's {comparison}.",
+  "Here's a fun one: that's {comparison}.",
+  "Consider this — that's {comparison}."
+];
+const FUN_FACT_REFS = [
+  // distance walked (km)
+  { measure:'distance', value:350, label:"the distance from Singapore to Kuala Lumpur" },
+  { measure:'distance', value:1430, label:"the distance from Singapore to Bangkok" },
+  { measure:'distance', value:880, label:"the distance from Singapore to Jakarta" },
+  { measure:'distance', value:2400, label:"the distance from Singapore to Manila" },
+  { measure:'distance', value:2570, label:"the distance from Singapore to Hong Kong" },
+  { measure:'distance', value:1080, label:"the distance from Singapore to Ho Chi Minh City" },
+  { measure:'distance', value:1150, label:"the distance from Singapore to Bali" },
+  { measure:'distance', value:5300, label:"the distance from Singapore to Tokyo" },
+  { measure:'distance', value:4700, label:"the distance from Singapore to Seoul" },
+  { measure:'distance', value:4480, label:"the distance from Singapore to Beijing" },
+  { measure:'distance', value:3900, label:"the distance from Singapore to Mumbai" },
+  { measure:'distance', value:5850, label:"the distance from Singapore to Dubai" },
+  { measure:'distance', value:6300, label:"the distance from Singapore to Sydney" },
+  { measure:'distance', value:8400, label:"the distance from Singapore to Auckland" },
+  { measure:'distance', value:10900, label:"the distance from Singapore to London" },
+  { measure:'distance', value:10740, label:"the distance from Singapore to Paris" },
+  { measure:'distance', value:15300, label:"the distance from Singapore to New York" },
+  { measure:'distance', value:14100, label:"the distance from Singapore to Los Angeles" },
+  { measure:'distance', value:9670, label:"the distance from Singapore to Cape Town" },
+  { measure:'distance', value:17700, label:"the distance from Singapore to Rio de Janeiro" },
+  { measure:'distance', value:193, label:"the length of Singapore's coastline" },
+  { measure:'distance', value:2300, label:"the length of the Great Barrier Reef" },
+  // calories burned
+  { measure:'calories', value:550, label:"the calories in a Big Mac" },
+  { measure:'calories', value:285, label:"the calories in a slice of pizza" },
+  { measure:'calories', value:140, label:"the calories in a can of Coke" },
+  { measure:'calories', value:600, label:"the calories in a chicken rice plate" },
+  { measure:'calories', value:450, label:"the calories in a bowl of laksa" },
+  { measure:'calories', value:230, label:"the calories in a croissant" },
+  { measure:'calories', value:105, label:"the calories in a banana" },
+  { measure:'calories', value:160, label:"the calories in a bag of potato chips" },
+  { measure:'calories', value:230, label:"the calories in a chocolate bar" },
+  { measure:'calories', value:350, label:"the calories in a bubble tea" },
+  { measure:'calories', value:500, label:"the calories in a plate of nasi lemak" },
+  { measure:'calories', value:250, label:"the calories in a donut" },
+  { measure:'calories', value:340, label:"the calories in a medium fries" },
+  { measure:'calories', value:150, label:"the calories in a beer" },
+  { measure:'calories', value:500, label:"the calories in a bowl of ramen" },
+  { measure:'calories', value:530, label:"the calories in a milkshake" },
+  { measure:'calories', value:400, label:"the calories in a slice of cheesecake" },
+  { measure:'calories', value:290, label:"the calories in a hotdog" },
+  { measure:'calories', value:630, label:"the calories in a movie-size bag of popcorn" },
+  { measure:'calories', value:2000, label:"the calories in a whole pizza" },
+  // height, "stood on end" (m)
+  { measure:'height', value:3776, label:"the height of Mount Fuji" },
+  { measure:'height', value:8.6, label:"the height of the Merlion" },
+  { measure:'height', value:200, label:"the height of Marina Bay Sands" },
+  { measure:'height', value:330, label:"the height of the Eiffel Tower" },
+  { measure:'height', value:443, label:"the height of the Empire State Building" },
+  { measure:'height', value:828, label:"the height of the Burj Khalifa" },
+  { measure:'height', value:421, label:"the height of the KL Tower" },
+  { measure:'height', value:8849, label:"the height of Mount Everest" },
+  { measure:'height', value:452, label:"the height of the Petronas Towers" },
+  { measure:'height', value:632, label:"the height of the Shanghai Tower" },
+  { measure:'height', value:165, label:"the height of the Singapore Flyer" },
+  { measure:'height', value:634, label:"the height of Tokyo Skytree" },
+  { measure:'height', value:139, label:"the height of the Great Pyramid of Giza" },
+  { measure:'height', value:4095, label:"the height of Mount Kinabalu" },
+  { measure:'height', value:93, label:"the height of the Statue of Liberty" },
+  { measure:'height', value:56, label:"the height of the Leaning Tower of Pisa" },
+  { measure:'height', value:96, label:"the height of Big Ben" },
+  { measure:'height', value:180, label:"the height of the Gherkin in London" },
+  { measure:'height', value:541, label:"the height of One World Trade Center" },
+  { measure:'height', value:5895, label:"the height of Mount Kilimanjaro" },
+  // walking time (minutes)
+  { measure:'time', value:120, label:"the runtime of a typical movie" },
+  { measure:'time', value:45, label:"the runtime of a TV drama episode" },
+  { measure:'time', value:150, label:"the length of a flight from Singapore to Bangkok" },
+  { measure:'time', value:410, label:"the length of a flight from Singapore to Tokyo" },
+  { measure:'time', value:105, label:"the length of a football match with stoppage time" },
+  { measure:'time', value:480, label:"the length of a full workday" },
+  { measure:'time', value:22, label:"the runtime of a sitcom episode" },
+  { measure:'time', value:3, label:"the length of a commercial break" },
+  { measure:'time', value:15, label:"the length of a coffee break" },
+  { measure:'time', value:18, label:"the length of a TED talk" },
+  { measure:'time', value:60, label:"the length of a university lecture" },
+  { measure:'time', value:40, label:"the runtime of a podcast episode" },
+  { measure:'time', value:60, label:"the length of a yoga class" },
+  { measure:'time', value:120, label:"the length of the Singapore Grand Prix race" },
+  { measure:'time', value:150, label:"the runtime of a Broadway musical" },
+  { measure:'time', value:600, label:"the runtime of a full season of a TV show" },
+  // raw step count
+  { measure:'count', value:55000, label:"the seats in the National Stadium" },
+  { measure:'count', value:9000, label:"the number of stars visible to the naked eye" },
+  { measure:'count', value:86400, label:"the number of seconds in a day" },
+  { measure:'count', value:800, label:"Vatican City's population" },
+  { measure:'count', value:50000, label:"a sold-out arena crowd" },
+  { measure:'count', value:12000, label:"the Singapore Indoor Stadium's capacity" },
+  { measure:'count', value:4100, label:"the number of pages in the Harry Potter series" },
+  { measure:'count', value:3600, label:"the number of emoji in the Unicode standard" },
+  { measure:'count', value:2000, label:"the students in a large secondary school" },
+  { measure:'count', value:450, label:"the seats on a jumbo jet" },
+  { measure:'count', value:50000, label:"the average number of steps in a full marathon" },
+  { measure:'count', value:525600, label:"the number of minutes in a year" },
+  { measure:'count', value:163, label:"the number of floors in the Burj Khalifa" },
+  { measure:'count', value:4200, label:"the average number of heartbeats in an hour" }
+];
 
 const App = {
   state: {
@@ -249,6 +370,10 @@ const App = {
     error: null,
     modal: null,
     draftSteps: {},
+    myFunFacts: null,
+    myFunFactsFor: null,
+    teamFunFacts: null,
+    teamFunFactsFor: null,
     bonusForm: { title:'', description:'', points:'', type:'individual' }
   },
 
@@ -490,6 +615,10 @@ const App = {
     const existing = this.state.mySteps.days[date] || {};
     const steps = draftVal !== undefined && draftVal !== '' ? Number(draftVal) : (existing.steps ?? null);
     if(steps === null || isNaN(steps)){ alert('Enter a step count before saving.'); return; }
+    if(steps > DAILY_STEP_CAP){
+      alert("That's above the maximum of " + DAILY_STEP_CAP.toLocaleString() + " steps allowed for a single day.");
+      return;
+    }
     const cfg = this.state.config;
     const limit = cfg.stepsLimit;
     if(limit){
@@ -659,25 +788,51 @@ const App = {
   },
 
   // ---------- Fun stats ----------
-  funStats(steps){
-    const distanceKm = steps * 0.0008;
-    const calories = steps * 0.04;
-    const burgers = calories / 295;
-    const coffees = calories / 120;
-    const distanceM = distanceKm * 1000;
-    const fujiTimes = distanceM / 3776;
-    const mrtLines = distanceKm / 45;
-    return { distanceKm, calories, burgers, coffees, fujiTimes, mrtLines };
+  funMeasuresFor(steps){
+    const distance = steps * 0.0008;              // km walked
+    const calories = steps * 0.04;                 // calories burned
+    const height = distance * 1000;                 // total distance, stood on end (m)
+    const time = (distance / 4.8) * 60;              // walking time at ~4.8 km/h (minutes)
+    return { distance, calories, height, time, count: steps };
   },
-  renderFunStats(steps, whoLabel){
-    if(!steps) return '';
-    const s = this.funStats(steps);
-    const facts = [];
-    facts.push(`${whoLabel} covered roughly <strong>${s.distanceKm.toFixed(1)} km</strong> so far.`);
-    facts.push(`That is about ${Math.round(s.calories).toLocaleString()} calories burned — worth roughly <strong>${s.burgers.toFixed(1)} burgers</strong> or <strong>${s.coffees.toFixed(1)} cups of coffee</strong>.`);
-    if(s.fujiTimes >= 1) facts.push(`Stood on end, that is <strong>${s.fujiTimes.toFixed(1)}×</strong> the height of Mount Fuji.`);
-    else facts.push(`Stood on end, that is <strong>${(s.fujiTimes*100).toFixed(0)}%</strong> of the way up Mount Fuji.`);
-    facts.push(`Or <strong>${s.mrtLines.toFixed(2)}×</strong> the length of Singapore's North-South MRT line.`);
+  formatComparison(ratio, label){
+    if(ratio >= 1){
+      const n = ratio >= 10 ? Math.round(ratio).toLocaleString() : ratio.toFixed(1);
+      return `<strong>${n}×</strong> ${label}`;
+    }
+    const pct = Math.max(1, Math.round(ratio*100));
+    return `<strong>${pct}%</strong> of ${label}`;
+  },
+  pickFunFacts(steps){
+    if(!steps) return [];
+    const measures = this.funMeasuresFor(steps);
+    const candidates = FUN_FACT_REFS
+      .map(ref => ({ ref, ratio: measures[ref.measure] / ref.value }))
+      .filter(c => isFinite(c.ratio) && c.ratio > 0);
+    for(let i=candidates.length-1; i>0; i--){
+      const j = Math.floor(Math.random()*(i+1));
+      [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+    }
+    const count = Math.min(candidates.length, Math.random() < 0.5 ? 1 : 2);
+    return candidates.slice(0, count).map(c => {
+      const template = FUN_FACT_TEMPLATES[Math.floor(Math.random()*FUN_FACT_TEMPLATES.length)];
+      return template.replace('{comparison}', this.formatComparison(c.ratio, c.ref.label));
+    });
+  },
+  // Regenerates only when the underlying total actually changes (not on
+  // every re-render), so the panel doesn't reshuffle just from switching tabs.
+  getFunFacts(kind, total, extraKey){
+    const factsKey = kind + 'FunFacts';
+    const totalKey = kind + 'FunFactsFor';
+    const cacheKey = total + ':' + (extraKey || '');
+    if(this.state[totalKey] !== cacheKey){
+      this.state[factsKey] = this.pickFunFacts(total);
+      this.state[totalKey] = cacheKey;
+    }
+    return this.state[factsKey];
+  },
+  renderFunStats(facts){
+    if(!facts || !facts.length) return '';
     return `<div class="fun-panel"><h3>Did you know?</h3><ul>${facts.map(f=>`<li>${f}</li>`).join('')}</ul></div>`;
   },
 
@@ -904,7 +1059,7 @@ const App = {
     }
     trailHtml += `</div></div>`;
 
-    const funHtml = this.renderFunStats(myTotal, "You've");
+    const funHtml = this.renderFunStats(this.getFunFacts('my', myTotal));
 
     const bonusList = Object.values(this.state.bonus).filter(b => b.type==='individual' && b.active !== false);
     let bonusHtml = '';
@@ -990,7 +1145,7 @@ const App = {
     if(editable){
       const val = draftSteps !== undefined ? draftSteps : (entry ? entry.steps : '');
       body = `
-        <input class="steps-input" type="number" min="0" placeholder="Steps" value="${val}" data-date="${date}" data-role="steps-input">
+        <input class="steps-input" type="number" min="0" max="${DAILY_STEP_CAP}" placeholder="Steps" value="${val}" data-date="${date}" data-role="steps-input">
         <button class="btn btn-primary btn-sm" data-date="${date}" data-role="save-day">Save</button>
       `;
     } else if(dayStatus === 'locked'){
@@ -1042,7 +1197,7 @@ const App = {
   renderTeamRoster(team){
     const isCaptain = team.captainUid === this.state.identity.uid;
     const teamTotal = team.members.reduce((s,m)=> s + this.totalStepsOf(this.state.allSteps[m]), 0);
-    const funHtml = this.renderFunStats(teamTotal, `${team.name} has`);
+    const funHtml = this.renderFunStats(this.getFunFacts('team', teamTotal, team.id));
 
     const membersHtml = team.members.map(m => {
       const u = this.state.users[m];
