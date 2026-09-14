@@ -365,16 +365,18 @@ const App = {
       this.render();
     }
   },
-  async submitProfile(name, country){
-    name = name.trim();
+  async submitProfile(firstName, lastName, country){
+    firstName = firstName.trim();
+    lastName = lastName.trim();
     country = country.trim();
-    if(!name){ this.state.error = 'Enter your name.'; this.render(); return; }
+    if(!firstName || !lastName){ this.state.error = 'Enter both your first and last name.'; this.render(); return; }
     this.state.error = null;
+    const name = `${firstName} ${lastName}`;
     const user = this.state.pendingUser;
     const email = (user.email || '').toLowerCase();
     const isOwner = email === OWNER_ADMIN_EMAIL;
     const profile = {
-      name, email, country,
+      name, firstName, lastName, email, country,
       provider: 'google',
       role: isOwner ? 'admin' : 'user',
       joinedAt: new Date().toISOString(),
@@ -802,13 +804,17 @@ const App = {
   renderLogin(){
     if(this.state.loginStep === 'profile'){
       const user = this.state.pendingUser;
+      const displayParts = (user && user.displayName ? user.displayName : '').trim().split(/\s+/);
+      const suggestedFirst = displayParts.length && displayParts[0] !== '' ? displayParts[0] : '';
+      const suggestedLast = displayParts.length > 1 ? displayParts.slice(1).join(' ') : '';
       return `
         <div class="login-wrap"><div class="login-card">
           <button class="back-link" id="btn-back-provider">&larr; Use a different account</button>
           <div class="login-hero">Create your profile</div>
           <div class="login-sub">Signed in as ${user ? user.email : ''} — tell us a bit about you.</div>
           ${this.state.error ? `<div class="notice">${this.state.error}</div>` : ''}
-          <div class="field"><label for="in-name">Name</label><input id="in-name" type="text" value="${user && user.displayName ? user.displayName : ''}" placeholder="Emily Tan"></div>
+          <div class="field"><label for="in-firstname">First name</label><input id="in-firstname" type="text" value="${suggestedFirst}" placeholder="Emily"></div>
+          <div class="field"><label for="in-lastname">Last name</label><input id="in-lastname" type="text" value="${suggestedLast}" placeholder="Tan"></div>
           <div class="field"><label for="in-country">Country / office</label><input id="in-country" type="text" placeholder="Singapore"></div>
           <button class="btn btn-primary btn-block" id="btn-submit-profile">Enter the trail</button>
         </div></div>
@@ -836,7 +842,8 @@ const App = {
     const submitProfile = document.getElementById('btn-submit-profile');
     if(submitProfile){
       submitProfile.addEventListener('click', () => this.submitProfile(
-        document.getElementById('in-name').value,
+        document.getElementById('in-firstname').value,
+        document.getElementById('in-lastname').value,
         document.getElementById('in-country').value
       ));
     }
