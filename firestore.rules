@@ -1,0 +1,65 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isSelf(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+    function isAdmin() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    function isOwnerEmail() {
+      return isSignedIn()
+        && request.auth.token.email != null
+        && request.auth.token.email.lower() == 'chenjiayi25@gmail.com';
+    }
+
+    // Challenge-wide settings (name, start date, weeks, step limit). Admin-only writes.
+    match /config/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // One profile doc per signed-in user, keyed by their Firebase Auth uid.
+    match /users/{uid} {
+      allow read: if isSignedIn();
+      // A user may only create their own profile, and may only grant themselves
+      // the admin role if they are the designated owner account.
+      allow create: if isSelf(uid)
+        && request.resource.data.role == (isOwnerEmail() ? 'admin' : 'user');
+      // Users may update their own profile (name/country/teamId) but never their
+      // own role. Admins may change ONLY the role field on any profile.
+      allow update: if isSignedIn() && (
+        (isSelf(uid) && request.resource.data.role == resource.data.role)
+        || (isAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role']))
+      );
+      allow delete: if false;
+    }
+
+    // Teams are a shared, collaborative resource (create/join/leave/remove-member
+    // all touch the team doc). Any signed-in participant may write to keep the
+    // team-management flow client-only, without a Cloud Functions backend.
+    match /teams/{teamId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+
+    // Bonus challenges are admin-authored and admin-awarded.
+    match /bonus/{bonusId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Per-user step logs, keyed by uid. Everyone can read (leaderboard/team
+    // views need everyone's totals); only the owner or an admin can write.
+    match /steps/{uid} {
+      allow read: if isSignedIn();
+      allow write: if isSelf(uid) || isAdmin();
+    }
+  }
+}

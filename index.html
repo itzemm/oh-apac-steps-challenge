@@ -1,0 +1,1376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>OH APAC — Steps Challenge</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+
+:root{
+  --bg:#F2F5EE;
+  --panel:#FFFFFF;
+  --ink:#1F2A1F;
+  --ink-soft:#57634F;
+  --line:#D9E0D0;
+  --line-strong:#B9C4AC;
+  --forest:#2F5233;
+  --forest-dark:#1E3A22;
+  --forest-tint:#E4EBDD;
+  --amber:#B9871F;
+  --amber-tint:#F4E7CB;
+  --rust:#8B4A3B;
+  --rust-tint:#F1DFD9;
+  --plum:#6A4C6E;
+  --plum-tint:#EBE2EC;
+}
+*{box-sizing:border-box;-webkit-text-size-adjust:100%;}
+html,body{margin:0;padding:0;width:100%;overflow-x:hidden;}
+body{
+  background:var(--bg);
+  color:var(--ink);
+  font-family:'IBM Plex Sans', -apple-system, 'Segoe UI', sans-serif;
+  font-size:15px;
+  line-height:1.5;
+}
+h1,h2,h3,.serif{font-family:'Fraunces', Georgia, serif;font-weight:600;color:var(--ink);margin:0;}
+#app{max-width:960px;margin:0 auto;padding:20px 16px 70px;width:100%;}
+a{color:inherit;}
+img{max-width:100%;}
+
+/* ---------- Login ---------- */
+.login-wrap{min-height:70vh;display:flex;align-items:center;justify-content:center;padding:16px;}
+.login-card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:32px 28px;max-width:420px;width:100%;}
+.login-hero{font-family:'Fraunces', Georgia, serif;font-weight:600;font-size:28px;letter-spacing:-0.01em;margin-bottom:6px;}
+.login-sub{color:var(--ink-soft);margin-bottom:24px;font-size:14px;}
+.field{margin-bottom:16px;}
+.field label{display:block;font-size:13px;color:var(--ink-soft);margin-bottom:6px;}
+.field input,.field select{width:100%;padding:10px 12px;border:1px solid var(--line-strong);border-radius:6px;font-size:15px;font-family:inherit;background:#fff;color:var(--ink);}
+.field input:focus,.field select:focus{outline:2px solid var(--forest);outline-offset:1px;}
+.privacy-note{font-size:12px;color:var(--ink-soft);margin-top:16px;line-height:1.5;}
+.provider-btn{display:flex;align-items:center;gap:10px;width:100%;padding:12px 16px;border-radius:6px;border:1px solid var(--line-strong);background:#fff;font-size:14px;font-family:inherit;cursor:pointer;margin-bottom:10px;color:var(--ink);}
+.provider-btn:hover{border-color:var(--forest);}
+.provider-btn:disabled{opacity:0.5;cursor:not-allowed;}
+.provider-icon{width:18px;height:18px;flex-shrink:0;}
+.back-link{background:none;border:none;color:var(--forest);text-decoration:underline;cursor:pointer;font-size:13px;padding:0;font-family:inherit;margin-bottom:14px;display:inline-block;}
+
+/* ---------- Buttons ---------- */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border-radius:6px;border:1px solid var(--line-strong);background:#fff;color:var(--ink);font-size:14px;font-family:inherit;cursor:pointer;}
+.btn:hover{border-color:var(--forest);}
+.btn:disabled{opacity:0.45;cursor:not-allowed;}
+.btn-primary{background:var(--forest);border-color:var(--forest);color:#fff;}
+.btn-primary:hover{background:var(--forest-dark);border-color:var(--forest-dark);}
+.btn-block{width:100%;justify-content:center;}
+.btn-sm{padding:5px 10px;font-size:13px;}
+.btn-danger{color:var(--rust);border-color:var(--rust);background:#fff;}
+
+/* ---------- Header ---------- */
+.header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;flex-wrap:wrap;gap:10px;}
+.header .title{font-size:23px;letter-spacing:-0.01em;}
+.header .who{font-size:13px;color:var(--ink-soft);margin-top:4px;}
+.header .who button{background:none;border:none;color:var(--forest);text-decoration:underline;cursor:pointer;font-size:13px;padding:0;font-family:inherit;}
+.status-pill{background:var(--forest-tint);color:var(--forest-dark);border-radius:20px;padding:6px 14px;font-size:13px;font-weight:500;white-space:nowrap;}
+
+/* ---------- Tabs ---------- */
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:20px;flex-wrap:wrap;overflow-x:auto;}
+.tab{padding:9px 14px;font-size:14px;cursor:pointer;border-bottom:2px solid transparent;color:var(--ink-soft);white-space:nowrap;}
+.tab.active{color:var(--forest-dark);border-bottom-color:var(--forest);font-weight:500;}
+.subtabs{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;}
+.subtab{padding:6px 14px;border-radius:20px;font-size:13px;cursor:pointer;background:#fff;border:1px solid var(--line-strong);color:var(--ink-soft);}
+.subtab.active{background:var(--forest);border-color:var(--forest);color:#fff;}
+
+/* ---------- Trail checkpoint graphic ---------- */
+.trail{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin-bottom:20px;}
+.trail-track{display:flex;align-items:center;}
+.trail-dot-wrap{display:flex;flex-direction:column;align-items:center;flex:1;position:relative;}
+.trail-dot-wrap:last-child{flex:0 0 auto;}
+.trail-line-row{display:flex;align-items:center;width:100%;}
+.trail-line{height:2px;flex:1;background:var(--line-strong);}
+.trail-line.filled{background:var(--forest);}
+.week-dot{width:20px;height:20px;border-radius:50%;border:2px solid var(--line-strong);background:#fff;flex-shrink:0;}
+.week-dot.done{background:var(--forest);border-color:var(--forest);}
+.week-dot.partial{background:var(--amber);border-color:var(--amber);}
+.week-dot.today{box-shadow:0 0 0 3px var(--amber-tint);border-color:var(--amber);}
+.week-dot.upcoming{opacity:0.5;}
+.trail-dot-label{font-size:12px;color:var(--ink-soft);margin-top:6px;}
+
+/* ---------- Week cards ---------- */
+.week-list{display:flex;flex-direction:column;gap:12px;margin-bottom:6px;}
+.week-card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px 18px;}
+.week-card.locked{background:#F7F8F5;}
+.wtop{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;}
+.wtop .wname{font-weight:500;font-size:15px;}
+.wtop .wdates{font-size:12px;color:var(--ink-soft);margin-left:8px;}
+.wbody{display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
+.steps-input{width:130px;padding:8px 10px;border:1px solid var(--line-strong);border-radius:6px;font-family:inherit;font-size:14px;}
+.steps-readout{font-size:15px;font-weight:500;}
+.thumb{width:48px;height:48px;border-radius:6px;object-fit:cover;border:1px solid var(--line);cursor:pointer;}
+.thumb-placeholder{width:48px;height:48px;border-radius:6px;border:1px dashed var(--line-strong);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--ink-soft);text-align:center;}
+.file-label{font-size:13px;color:var(--forest);cursor:pointer;text-decoration:underline;}
+.file-label input{display:none;}
+.day-list{display:flex;flex-direction:column;gap:6px;margin-top:10px;}
+.day-row{display:flex;align-items:center;gap:14px;padding:8px 0;border-top:1px solid var(--line);flex-wrap:wrap;}
+.day-date{width:96px;flex-shrink:0;}
+.day-date .dow{font-size:12px;color:var(--ink-soft);}
+.day-date .num{font-size:13px;font-weight:500;}
+.day-body{display:flex;align-items:center;gap:10px;flex:1;flex-wrap:wrap;}
+.tag{font-size:12px;padding:3px 9px;border-radius:20px;white-space:nowrap;}
+.tag-locked{background:var(--rust-tint);color:var(--rust);}
+.tag-upcoming{background:#EEF0EA;color:var(--ink-soft);}
+.tag-editable{background:var(--forest-tint);color:var(--forest-dark);}
+.tag-awarded{background:var(--forest-tint);color:var(--forest-dark);}
+.tag-pending{background:#EEF0EA;color:var(--ink-soft);}
+.tag-full{background:var(--rust-tint);color:var(--rust);}
+.tag-open{background:var(--forest-tint);color:var(--forest-dark);}
+.tag-flag{background:var(--rust-tint);color:var(--rust);}
+
+/* ---------- Panels / tables ---------- */
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin-bottom:18px;}
+.panel h3{font-size:16px;margin-bottom:12px;}
+.config-row{display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap;}
+.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 -4px;}
+table.roster{width:100%;border-collapse:collapse;font-size:13px;min-width:640px;}
+table.roster th{text-align:left;font-weight:500;color:var(--ink-soft);font-size:11px;padding:8px 8px;border-bottom:1px solid var(--line);white-space:nowrap;}
+table.roster td{padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:middle;}
+.week-cell{font-size:12px;line-height:1.7;white-space:nowrap;}
+.role-pill{font-size:12px;padding:3px 10px;border-radius:20px;background:var(--forest-tint);color:var(--forest-dark);}
+.role-pill.admin{background:var(--amber-tint);color:#7A5A11;}
+
+/* ---------- Leaderboard ---------- */
+.lb-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);flex-wrap:wrap;}
+.lb-row:last-child{border-bottom:none;}
+.lb-rank{width:20px;font-size:13px;color:var(--ink-soft);flex-shrink:0;}
+.lb-name{width:130px;flex-shrink:0;font-size:14px;}
+.lb-bar-wrap{flex:1;min-width:80px;background:var(--forest-tint);border-radius:4px;height:10px;overflow:hidden;}
+.lb-bar{height:100%;background:var(--forest);}
+.lb-bar.team{background:var(--plum);}
+.lb-bar-wrap.team{background:var(--plum-tint);}
+.lb-total{width:90px;text-align:right;font-size:13px;color:var(--ink-soft);flex-shrink:0;}
+
+/* ---------- Teams ---------- */
+.team-card{border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;}
+.team-card .tname{font-weight:500;}
+.team-card .tmeta{font-size:13px;color:var(--ink-soft);}
+.member-row{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line);flex-wrap:wrap;gap:6px;}
+.member-row:last-child{border-bottom:none;}
+.captain-tag{font-size:11px;color:var(--amber);margin-left:8px;}
+.form-inline{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;}
+
+/* ---------- Bonus challenges ---------- */
+.challenge-card{border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin-bottom:10px;}
+.challenge-card .ctop{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;}
+.challenge-card .ctitle{font-weight:500;font-size:15px;}
+.challenge-card .cdesc{font-size:13px;color:var(--ink-soft);margin-top:4px;}
+.points-pill{background:var(--amber-tint);color:#7A5A11;font-size:12px;padding:3px 10px;border-radius:20px;white-space:nowrap;}
+.type-pill{background:#EEF0EA;color:var(--ink-soft);font-size:11px;padding:2px 8px;border-radius:20px;margin-left:6px;}
+.award-grid{margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;}
+.award-chip{display:flex;align-items:center;gap:6px;border:1px solid var(--line-strong);border-radius:20px;padding:4px 10px;font-size:12px;cursor:pointer;}
+.award-chip.awarded{background:var(--forest-tint);border-color:var(--forest);color:var(--forest-dark);}
+
+/* ---------- Fun stats ---------- */
+.fun-panel{background:var(--forest-tint);border:1px solid var(--forest);border-radius:10px;padding:16px 20px;margin-bottom:20px;}
+.fun-panel h3{color:var(--forest-dark);}
+.fun-panel ul{margin:8px 0 0;padding-left:18px;}
+.fun-panel li{margin-bottom:4px;font-size:14px;}
+
+/* ---------- Modal ---------- */
+.modal-overlay{position:fixed;inset:0;background:rgba(20,26,18,0.55);display:flex;align-items:center;justify-content:center;padding:16px;z-index:50;}
+.modal{background:#fff;border-radius:10px;padding:22px;max-width:480px;width:100%;max-height:85vh;overflow:auto;}
+.modal img{width:100%;border-radius:6px;margin-top:10px;}
+.modal-close{float:right;background:none;border:none;font-size:20px;cursor:pointer;color:var(--ink-soft);line-height:1;}
+.modal table{width:100%;border-collapse:collapse;font-size:13px;margin-top:12px;}
+.modal table td, .modal table th{padding:6px 4px;border-bottom:1px solid var(--line);}
+
+.empty{color:var(--ink-soft);font-size:14px;padding:16px 0;}
+.loading{color:var(--ink-soft);font-size:14px;padding:16px 0;}
+.notice{background:var(--amber-tint);color:#7A5A11;border-radius:8px;padding:12px 16px;font-size:13px;margin-bottom:18px;}
+
+@media (max-width:600px){
+  .header{gap:8px;}
+  .header .title{font-size:20px;}
+  .lb-name{width:96px;font-size:13px;}
+  .lb-total{width:74px;font-size:12px;}
+  .week-list .wbody{gap:10px;}
+  .steps-input{width:110px;}
+}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
+import {
+  getAuth, GoogleAuthProvider, OAuthProvider, signInWithPopup,
+  onAuthStateChanged, signOut
+} from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
+import {
+  getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection
+} from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
+
+// ---------- Firebase setup ----------
+const firebaseConfig = {
+  apiKey: "AIzaSyBKx60MK8CWx0s8gCKMCCLmZkiPgzLyWlM",
+  authDomain: "oh-apac-steps-challenge.firebaseapp.com",
+  projectId: "oh-apac-steps-challenge",
+  storageBucket: "oh-apac-steps-challenge.firebasestorage.app",
+  messagingSenderId: "857921019446",
+  appId: "1:857921019446:web:4995b7de646da6d9190297"
+};
+const fbApp = initializeApp(firebaseConfig);
+const auth = getAuth(fbApp);
+const db = getFirestore(fbApp);
+const googleProvider = new GoogleAuthProvider();
+const microsoftProvider = new OAuthProvider('microsoft.com');
+
+// The account that always becomes admin the first time it creates a profile.
+// Additional admins can then be promoted from the Admin tab.
+const OWNER_ADMIN_EMAIL = 'chenjiayi25@gmail.com';
+
+const TEAM_SIZE_LIMIT = 5;
+const DEFAULT_CONFIG = { name: 'OH APAC Steps Challenge', startDate: null, weeks: 3, stepsLimit: null };
+
+const App = {
+  state: {
+    authUser: null,
+    identity: null,
+    pendingUser: null,
+    loginStep: 'provider',
+    signingIn: false,
+    config: null,
+    users: {},
+    teams: {},
+    bonus: {},
+    mySteps: null,
+    allSteps: {},
+    allStepsLoaded: false,
+    view: 'trail',
+    lbTab: null,
+    booting: true,
+    error: null,
+    modal: null,
+    draftSteps: {},
+    bonusForm: { title:'', description:'', points:'', type:'individual' }
+  },
+
+  init(){
+    onAuthStateChanged(auth, (user) => this.handleAuthChange(user));
+  },
+
+  async handleAuthChange(user){
+    this.state.authUser = user;
+    this.state.signingIn = false;
+    if(!user){
+      this.state.identity = null;
+      this.state.mySteps = null;
+      this.state.pendingUser = null;
+      this.state.loginStep = 'provider';
+      this.state.booting = false;
+      this.render();
+      return;
+    }
+    this.state.booting = true;
+    this.render();
+    await this.loadConfig();
+    await this.loadUsers();
+    await this.loadTeams();
+    await this.loadBonus();
+    const profile = this.state.users[user.uid];
+    if(profile){
+      this.state.identity = { uid: user.uid, name: profile.name, email: profile.email };
+      await this.enterApp();
+    } else {
+      this.state.pendingUser = user;
+      this.state.loginStep = 'profile';
+    }
+    this.state.booting = false;
+    this.render();
+  },
+
+  async loadConfig(){
+    try{
+      const snap = await getDoc(doc(db,'config','main'));
+      this.state.config = snap.exists() ? {...DEFAULT_CONFIG, ...snap.data()} : {...DEFAULT_CONFIG};
+    }catch(e){ this.state.config = {...DEFAULT_CONFIG}; }
+  },
+  async loadUsers(){
+    try{
+      const snap = await getDocs(collection(db,'users'));
+      const map = {};
+      snap.forEach(d => { map[d.id] = { uid: d.id, ...d.data() }; });
+      this.state.users = map;
+    }catch(e){ this.state.users = {}; }
+  },
+  async loadTeams(){
+    try{
+      const snap = await getDocs(collection(db,'teams'));
+      const map = {};
+      snap.forEach(d => { map[d.id] = { id: d.id, ...d.data() }; });
+      this.state.teams = map;
+    }catch(e){ this.state.teams = {}; }
+  },
+  async loadBonus(){
+    try{
+      const snap = await getDocs(collection(db,'bonus'));
+      const map = {};
+      snap.forEach(d => { map[d.id] = { id: d.id, ...d.data() }; });
+      this.state.bonus = map;
+    }catch(e){ this.state.bonus = {}; }
+  },
+  async saveConfig(){ await setDoc(doc(db,'config','main'), this.state.config, { merge:true }); },
+
+  async loadMySteps(){
+    const uid = this.state.identity.uid;
+    try{
+      const snap = await getDoc(doc(db,'steps',uid));
+      this.state.mySteps = snap.exists() ? snap.data() : { name:this.state.identity.name, email:this.state.identity.email, days:{}, weekProof:{} };
+    }catch(e){
+      this.state.mySteps = { name:this.state.identity.name, email:this.state.identity.email, days:{}, weekProof:{} };
+    }
+  },
+  async saveMySteps(){
+    await setDoc(doc(db,'steps', this.state.identity.uid), this.state.mySteps);
+  },
+
+  async loadAllSteps(){
+    this.state.allStepsLoaded = false;
+    this.render();
+    try{
+      const snap = await getDocs(collection(db,'steps'));
+      const results = {};
+      snap.forEach(d => { results[d.id] = d.data(); });
+      this.state.allSteps = results;
+    }catch(e){ this.state.allSteps = {}; }
+    this.state.allStepsLoaded = true;
+    this.render();
+  },
+
+  // ---------- Login flow ----------
+  friendlyAuthError(e){
+    const code = e && e.code ? e.code : '';
+    if(code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') return null;
+    if(code === 'auth/account-exists-with-different-credential') return 'That email is already linked to a different sign-in method.';
+    if(code === 'auth/operation-not-allowed') return 'This sign-in method isn’t enabled yet. Ask an admin to enable it in Firebase.';
+    if(code === 'auth/unauthorized-domain') return 'This website’s domain isn’t authorized for sign-in yet. Ask an admin to add it in Firebase.';
+    return 'Sign-in failed. Please try again.';
+  },
+  async signInWithGoogle(){
+    this.state.error = null;
+    this.state.signingIn = true;
+    this.render();
+    try{
+      await signInWithPopup(auth, googleProvider);
+    }catch(e){
+      this.state.error = this.friendlyAuthError(e);
+      this.state.signingIn = false;
+      this.render();
+    }
+  },
+  async signInWithMicrosoft(){
+    this.state.error = null;
+    this.state.signingIn = true;
+    this.render();
+    try{
+      await signInWithPopup(auth, microsoftProvider);
+    }catch(e){
+      this.state.error = this.friendlyAuthError(e);
+      this.state.signingIn = false;
+      this.render();
+    }
+  },
+  async submitProfile(name, country){
+    name = name.trim();
+    country = country.trim();
+    if(!name){ this.state.error = 'Enter your name.'; this.render(); return; }
+    this.state.error = null;
+    const user = this.state.pendingUser;
+    const email = (user.email || '').toLowerCase();
+    const isOwner = email === OWNER_ADMIN_EMAIL;
+    const providerId = (user.providerData[0] && user.providerData[0].providerId) || '';
+    const profile = {
+      name, email, country,
+      provider: providerId.includes('microsoft') ? 'microsoft' : 'google',
+      role: isOwner ? 'admin' : 'user',
+      joinedAt: new Date().toISOString(),
+      teamId: null
+    };
+    await setDoc(doc(db,'users',user.uid), profile);
+    this.state.users[user.uid] = { uid:user.uid, ...profile };
+    this.state.identity = { uid:user.uid, name, email };
+    this.state.pendingUser = null;
+    await this.enterApp();
+    this.render();
+  },
+
+  async enterApp(){
+    await this.loadMySteps();
+    this.state.view = 'trail';
+    this.state.loginStep = 'provider';
+  },
+
+  async switchIdentity(){
+    try{ await signOut(auth); }catch(e){}
+  },
+
+  setView(v){
+    this.state.view = v;
+    if((v === 'myteam' || v === 'leaderboard' || v === 'admin') && !this.state.allStepsLoaded){
+      this.loadAllSteps();
+    } else {
+      this.render();
+    }
+  },
+
+  // ---------- Date helpers (fixed Singapore time, UTC+8) ----------
+  sgtNow(){ return new Date(Date.now() + 8*60*60*1000); },
+  sgtToday(){ return this.sgtNow().toISOString().slice(0,10); },
+  addDays(dateStr, n){
+    const d = new Date(dateStr + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() + n);
+    return d.toISOString().slice(0,10);
+  },
+  daysBetween(a,b){ return Math.round((new Date(b+'T00:00:00Z') - new Date(a+'T00:00:00Z')) / 86400000); },
+  formatDate(dateStr){
+    const d = new Date(dateStr + 'T00:00:00Z');
+    return d.toLocaleDateString('en-US', { month:'short', day:'numeric', timeZone:'UTC' });
+  },
+  weekDateRange(weekIndex){
+    const cfg = this.state.config;
+    const start = this.addDays(cfg.startDate, weekIndex*7);
+    const end = this.addDays(cfg.startDate, weekIndex*7+6);
+    return this.formatDate(start) + ' – ' + this.formatDate(end);
+  },
+
+  getChallengeStatus(){
+    const cfg = this.state.config;
+    if(!cfg || !cfg.startDate) return { started:false };
+    const today = this.sgtToday();
+    const dayIndex = this.daysBetween(cfg.startDate, today);
+    const totalDays = cfg.weeks * 7;
+    if(dayIndex < 0) return { started:false, startsIn: -dayIndex };
+    if(dayIndex >= totalDays) return { started:true, ended:true, dayIndex, weekIndex: cfg.weeks-1 };
+    return { started:true, ended:false, dayIndex, weekIndex: Math.floor(dayIndex/7) };
+  },
+
+  getWeekStatus(weekIndex){
+    const status = this.getChallengeStatus();
+    if(!status.started) return 'not-started';
+    if(status.ended) return 'locked';
+    if(weekIndex < status.weekIndex) return 'locked';
+    if(weekIndex === status.weekIndex) return 'editable';
+    return 'future';
+  },
+
+  getDayStatus(i){
+    const status = this.getChallengeStatus();
+    const dayWeek = Math.floor(i/7);
+    if(!status.started) return 'not-started';
+    if(status.ended) return 'locked';
+    if(dayWeek < status.weekIndex) return 'locked';
+    if(dayWeek === status.weekIndex){
+      if(i < status.dayIndex) return 'editable';
+      if(i === status.dayIndex) return 'editable-today';
+      return 'future';
+    }
+    return 'future-week';
+  },
+
+  totalStepsOf(record){
+    if(!record) return 0;
+    return Object.values(record.days || {}).reduce((s,d)=>s+(d.steps||0),0);
+  },
+  totalStepsInRange(record, sel){
+    if(!record) return 0;
+    if(sel === 'overall') return this.totalStepsOf(record);
+    const cfg = this.state.config;
+    if(!cfg.startDate) return 0;
+    let sum = 0;
+    for(let d=0; d<7; d++){
+      const date = this.addDays(cfg.startDate, sel*7 + d);
+      const entry = record.days[date];
+      if(entry) sum += entry.steps || 0;
+    }
+    return sum;
+  },
+  weekProofOf(record, weekIndex){
+    return record && record.weekProof ? record.weekProof[weekIndex] : null;
+  },
+
+  // ---------- Daily steps entry, weekly proof ----------
+  async saveDay(date){
+    const draftVal = this.state.draftSteps[date];
+    const existing = this.state.mySteps.days[date] || {};
+    const steps = draftVal !== undefined && draftVal !== '' ? Number(draftVal) : (existing.steps ?? null);
+    if(steps === null || isNaN(steps)){ alert('Enter a step count before saving.'); return; }
+    const cfg = this.state.config;
+    const limit = cfg.stepsLimit;
+    if(limit){
+      const dayIndex = this.daysBetween(cfg.startDate, date);
+      const weekIndex = Math.floor(dayIndex/7);
+      let weekTotal = 0;
+      for(let d=0; d<7; d++){
+        const dt = this.addDays(cfg.startDate, weekIndex*7 + d);
+        weekTotal += (dt === date) ? steps : (this.state.mySteps.days[dt] ? this.state.mySteps.days[dt].steps : 0);
+      }
+      if(weekTotal > limit){
+        alert("That would put this week's total at " + weekTotal.toLocaleString() + " steps, above the maximum of " + limit.toLocaleString() + " set by the admin.");
+        return;
+      }
+    }
+    this.state.mySteps.days[date] = { steps, submittedAt: new Date().toISOString() };
+    delete this.state.draftSteps[date];
+    await this.saveMySteps();
+    this.render();
+  },
+
+  async handleWeekProofFile(weekIndex, inputEl){
+    const file = inputEl.files[0];
+    if(!file) return;
+    try{
+      const dataUrl = await this.compressImage(file);
+      if(!this.state.mySteps.weekProof) this.state.mySteps.weekProof = {};
+      this.state.mySteps.weekProof[weekIndex] = { proof: dataUrl, submittedAt: new Date().toISOString() };
+      await this.saveMySteps();
+      this.render();
+    }catch(e){ alert('Could not process that image. Try a different file.'); }
+  },
+
+  compressImage(file){
+    return new Promise((resolve, reject)=>{
+      const reader = new FileReader();
+      reader.onload = e => {
+        const img = new Image();
+        img.onload = () => {
+          const maxDim = 800;
+          let w = img.width, h = img.height;
+          if(w > h && w > maxDim){ h = Math.round(h*maxDim/w); w = maxDim; }
+          else if(h >= w && h > maxDim){ w = Math.round(w*maxDim/h); h = maxDim; }
+          const canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          canvas.getContext('2d').drawImage(img,0,0,w,h);
+          resolve(canvas.toDataURL('image/jpeg', 0.6));
+        };
+        img.onerror = reject;
+        img.src = e.target.result;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  },
+
+  // ---------- Teams ----------
+  getMyTeam(){
+    const me = this.state.users[this.state.identity.uid];
+    if(!me || !me.teamId) return null;
+    return this.state.teams[me.teamId] || null;
+  },
+  slugify(name){
+    return name.toLowerCase().trim().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'') || 'team';
+  },
+  async createTeam(name){
+    name = name.trim();
+    if(!name){ alert('Give your team a name.'); return; }
+    const uid = this.state.identity.uid;
+    if(this.state.users[uid].teamId){ alert('Leave your current team first.'); return; }
+    const teamRef = doc(collection(db,'teams'));
+    const team = { id: teamRef.id, name, captainUid: uid, members:[uid], createdAt: new Date().toISOString() };
+    await setDoc(teamRef, team);
+    await updateDoc(doc(db,'users',uid), { teamId: teamRef.id });
+    this.state.teams[teamRef.id] = team;
+    this.state.users[uid].teamId = teamRef.id;
+    this.render();
+  },
+  async joinTeam(teamId){
+    const uid = this.state.identity.uid;
+    if(this.state.users[uid].teamId){ alert('Leave your current team first.'); return; }
+    const team = this.state.teams[teamId];
+    if(!team) return;
+    if(team.members.length >= TEAM_SIZE_LIMIT){ alert('That team is already full.'); return; }
+    const members = [...team.members, uid];
+    await updateDoc(doc(db,'teams',teamId), { members });
+    await updateDoc(doc(db,'users',uid), { teamId });
+    team.members = members;
+    this.state.users[uid].teamId = teamId;
+    this.render();
+  },
+  async leaveTeam(){
+    const uid = this.state.identity.uid;
+    const me = this.state.users[uid];
+    const team = this.state.teams[me.teamId];
+    if(!team) return;
+    if(!confirm('Leave ' + team.name + '?')) return;
+    const members = team.members.filter(m => m !== uid);
+    if(members.length === 0){
+      await deleteDoc(doc(db,'teams',team.id));
+      delete this.state.teams[team.id];
+    } else {
+      const captainUid = team.captainUid === uid ? members[0] : team.captainUid;
+      await updateDoc(doc(db,'teams',team.id), { members, captainUid });
+      team.members = members;
+      team.captainUid = captainUid;
+    }
+    await updateDoc(doc(db,'users',uid), { teamId:null });
+    me.teamId = null;
+    this.render();
+  },
+  async removeMember(teamId, targetUid){
+    const team = this.state.teams[teamId];
+    if(!team) return;
+    if(team.captainUid !== this.state.identity.uid){ alert('Only the captain can remove members.'); return; }
+    if(targetUid === team.captainUid){ alert('The captain should use "Leave team" instead.'); return; }
+    if(!confirm('Remove this person from ' + team.name + '?')) return;
+    const members = team.members.filter(m => m !== targetUid);
+    await updateDoc(doc(db,'teams',teamId), { members });
+    team.members = members;
+    if(this.state.users[targetUid]){
+      await updateDoc(doc(db,'users',targetUid), { teamId:null });
+      this.state.users[targetUid].teamId = null;
+    }
+    this.render();
+  },
+
+  // ---------- Bonus challenges ----------
+  async addBonusChallenge(){
+    const f = this.state.bonusForm;
+    const title = f.title.trim();
+    const points = Number(f.points);
+    if(!title || !points || points <= 0){ alert('Give the challenge a title and a positive points value.'); return; }
+    const ref = doc(collection(db,'bonus'));
+    const b = { id: ref.id, title, description: f.description.trim(), points, type: f.type, active: true, createdAt: new Date().toISOString(), completed: [] };
+    await setDoc(ref, b);
+    this.state.bonus[ref.id] = b;
+    this.state.bonusForm = { title:'', description:'', points:'', type:'individual' };
+    this.render();
+  },
+  async toggleBonusActive(id){
+    const next = !this.state.bonus[id].active;
+    await updateDoc(doc(db,'bonus',id), { active: next });
+    this.state.bonus[id].active = next;
+    this.render();
+  },
+  async deleteBonusChallenge(id){
+    if(!confirm('Delete this bonus challenge? This removes any awards already given.')) return;
+    await deleteDoc(doc(db,'bonus',id));
+    delete this.state.bonus[id];
+    this.render();
+  },
+  async toggleAward(challengeId, targetId){
+    const ch = this.state.bonus[challengeId];
+    const idx = ch.completed.indexOf(targetId);
+    const completed = [...ch.completed];
+    if(idx > -1) completed.splice(idx,1); else completed.push(targetId);
+    await updateDoc(doc(db,'bonus',challengeId), { completed });
+    ch.completed = completed;
+    this.render();
+  },
+  individualBonusPoints(uid){
+    return Object.values(this.state.bonus).filter(b => b.type==='individual' && b.completed.includes(uid)).reduce((s,b)=>s+b.points,0);
+  },
+  teamBonusPoints(teamId){
+    return Object.values(this.state.bonus).filter(b => b.type==='team' && b.completed.includes(teamId)).reduce((s,b)=>s+b.points,0);
+  },
+
+  // ---------- Fun stats ----------
+  funStats(steps){
+    const distanceKm = steps * 0.0008;
+    const calories = steps * 0.04;
+    const burgers = calories / 295;
+    const coffees = calories / 120;
+    const distanceM = distanceKm * 1000;
+    const fujiTimes = distanceM / 3776;
+    const mrtLines = distanceKm / 45;
+    return { distanceKm, calories, burgers, coffees, fujiTimes, mrtLines };
+  },
+  renderFunStats(steps, whoLabel){
+    if(!steps) return '';
+    const s = this.funStats(steps);
+    const facts = [];
+    facts.push(`${whoLabel} covered roughly <strong>${s.distanceKm.toFixed(1)} km</strong> so far.`);
+    facts.push(`That is about ${Math.round(s.calories).toLocaleString()} calories burned — worth roughly <strong>${s.burgers.toFixed(1)} burgers</strong> or <strong>${s.coffees.toFixed(1)} cups of coffee</strong>.`);
+    if(s.fujiTimes >= 1) facts.push(`Stood on end, that is <strong>${s.fujiTimes.toFixed(1)}×</strong> the height of Mount Fuji.`);
+    else facts.push(`Stood on end, that is <strong>${(s.fujiTimes*100).toFixed(0)}%</strong> of the way up Mount Fuji.`);
+    facts.push(`Or <strong>${s.mrtLines.toFixed(2)}×</strong> the length of Singapore's North-South MRT line.`);
+    return `<div class="fun-panel"><h3>Did you know?</h3><ul>${facts.map(f=>`<li>${f}</li>`).join('')}</ul></div>`;
+  },
+
+  // ---------- Missing-proof flag ----------
+  missingIssues(user){
+    const rec = this.state.allSteps[user.uid] || { days:{}, weekProof:{} };
+    const status = this.getChallengeStatus();
+    const cfg = this.state.config;
+    const issues = [];
+    for(let w=0; w<cfg.weeks; w++){
+      const locked = status.ended ? true : (status.started && w < status.weekIndex);
+      if(!locked) continue;
+      const weekTotal = this.totalStepsInRange(rec, w);
+      const proof = this.weekProofOf(rec, w);
+      if(!weekTotal) issues.push({ week:w, type:'missing' });
+      else if(!proof) issues.push({ week:w, type:'no-proof' });
+    }
+    return issues;
+  },
+
+  // ---------- CSV export ----------
+  csvEscape(v){
+    v = (v===null||v===undefined) ? '' : String(v);
+    if(/[",\n]/.test(v)) v = '"' + v.replace(/"/g,'""') + '"';
+    return v;
+  },
+  downloadCSV(filename, rows){
+    const csv = rows.map(r=>r.map(v=>this.csvEscape(v)).join(',')).join('\r\n');
+    const blob = new Blob([csv], { type:'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  },
+  exportParticipantsCSV(){
+    const cfg = this.state.config;
+    const header = ['Name','Email','Country','Team','Role'];
+    for(let w=0; w<cfg.weeks; w++){ header.push('Week '+(w+1)+' Steps'); header.push('Week '+(w+1)+' Proof'); }
+    header.push('Total Steps','Bonus Points','Overall Score','Missing Proof Weeks');
+    const rows = [header];
+    Object.values(this.state.users).forEach(u => {
+      const rec = this.state.allSteps[u.uid] || { days:{}, weekProof:{} };
+      const row = [u.name, u.email, u.country||'', u.teamId && this.state.teams[u.teamId] ? this.state.teams[u.teamId].name : '', u.role];
+      for(let w=0; w<cfg.weeks; w++){
+        row.push(this.totalStepsInRange(rec, w) || '');
+        row.push(this.weekProofOf(rec, w) ? 'Yes' : 'No');
+      }
+      const total = this.totalStepsOf(rec);
+      const bonus = this.individualBonusPoints(u.uid);
+      row.push(total, bonus, total+bonus, this.missingIssues(u).length);
+      rows.push(row);
+    });
+    this.downloadCSV('participants.csv', rows);
+  },
+  exportTeamsCSV(){
+    const cfg = this.state.config;
+    const header = ['Team','Captain','Members','Member Count'];
+    for(let w=0; w<cfg.weeks; w++) header.push('Week '+(w+1)+' Total');
+    header.push('Total Steps','Bonus Points','Overall Score');
+    const rows = [header];
+    Object.values(this.state.teams).forEach(t => {
+      const memberNames = t.members.map(m => this.state.users[m] ? this.state.users[m].name : m).join('; ');
+      const row = [t.name, this.state.users[t.captainUid] ? this.state.users[t.captainUid].name : t.captainUid, memberNames, t.members.length];
+      for(let w=0; w<cfg.weeks; w++){
+        const weekTotal = t.members.reduce((s,m)=> s + this.totalStepsInRange(this.state.allSteps[m], w), 0);
+        row.push(weekTotal);
+      }
+      const total = t.members.reduce((s,m)=> s + this.totalStepsOf(this.state.allSteps[m]), 0);
+      const bonus = this.teamBonusPoints(t.id);
+      row.push(total, bonus, total+bonus);
+      rows.push(row);
+    });
+    this.downloadCSV('teams.csv', rows);
+  },
+
+  // ---------- Admin actions ----------
+  async setRole(uid, role){
+    const admins = Object.values(this.state.users).filter(u=>u.role==='admin');
+    if(role === 'user' && admins.length === 1 && admins[0].uid === uid){
+      alert("Can't remove the last remaining admin. Promote someone else first.");
+      return;
+    }
+    await updateDoc(doc(db,'users',uid), { role });
+    this.state.users[uid].role = role;
+    this.render();
+  },
+  async setStartDate(dateStr){
+    this.state.config.startDate = dateStr;
+    await this.saveConfig();
+    this.render();
+  },
+  async setStepsLimit(val){
+    const n = Number(val);
+    this.state.config.stepsLimit = val && n > 0 ? n : null;
+    await this.saveConfig();
+    this.render();
+  },
+  async resetChallenge(){
+    if(!confirm("This clears everyone's steps and proof, and the start date. This cannot be undone. Continue?")) return;
+    const snap = await getDocs(collection(db,'steps'));
+    await Promise.all(snap.docs.map(d => updateDoc(d.ref, { days:{}, weekProof:{} })));
+    this.state.config.startDate = null;
+    await this.saveConfig();
+    this.state.mySteps.days = {};
+    this.state.mySteps.weekProof = {};
+    this.state.allSteps = {};
+    this.state.allStepsLoaded = false;
+    this.render();
+  },
+
+  openModal(modal){ this.state.modal = modal; this.render(); },
+  closeModal(){ this.state.modal = null; this.render(); },
+
+  // ---------- Render ----------
+  render(){
+    const root = document.getElementById('app');
+    if(this.state.booting){ root.innerHTML = '<div class="loading">Loading the trail…</div>'; return; }
+    if(!this.state.identity){ root.innerHTML = this.renderLogin(); this.bindLogin(); return; }
+    root.innerHTML = this.renderAppShell();
+    this.bindApp();
+  },
+
+  renderLogin(){
+    if(this.state.loginStep === 'profile'){
+      const user = this.state.pendingUser;
+      return `
+        <div class="login-wrap"><div class="login-card">
+          <button class="back-link" id="btn-back-provider">&larr; Use a different account</button>
+          <div class="login-hero">Create your profile</div>
+          <div class="login-sub">Signed in as ${user ? user.email : ''} — tell us a bit about you.</div>
+          ${this.state.error ? `<div class="notice">${this.state.error}</div>` : ''}
+          <div class="field"><label for="in-name">Name</label><input id="in-name" type="text" value="${user && user.displayName ? user.displayName : ''}" placeholder="Emily Tan"></div>
+          <div class="field"><label for="in-country">Country / office</label><input id="in-country" type="text" placeholder="Singapore"></div>
+          <button class="btn btn-primary btn-block" id="btn-submit-profile">Enter the trail</button>
+        </div></div>
+      `;
+    }
+    return `
+      <div class="login-wrap"><div class="login-card">
+        <div class="login-hero">OH APAC Steps Challenge</div>
+        <div class="login-sub">A team steps challenge, wherever you're logging in from.</div>
+        ${this.state.error ? `<div class="notice">${this.state.error}</div>` : ''}
+        <button class="provider-btn" id="btn-google" ${this.state.signingIn ? 'disabled' : ''}>
+          <svg class="provider-icon" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3c-1.6 4.6-6 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.5 6 29.5 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.2-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.6 15.9 18.9 13 24 13c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.5 7 29.5 5 24 5c-7.5 0-14 4.2-17.7 10.4z"/><path fill="#4CAF50" d="M24 44c5.4 0 10.3-1.9 14-5.1l-6.5-5.4C29.4 35.3 26.8 36 24 36c-5.3 0-9.7-3.4-11.3-8.1l-6.6 5C9.9 39.6 16.4 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.1-4.1 5.5l6.5 5.4C41.5 35.8 44 30.3 44 24c0-1.2-.1-2.4-.4-3.5z"/></svg>
+          Continue with Google
+        </button>
+        <button class="provider-btn" id="btn-microsoft" ${this.state.signingIn ? 'disabled' : ''}>
+          <svg class="provider-icon" viewBox="0 0 23 23"><path fill="#f35325" d="M1 1h10v10H1z"/><path fill="#81bc06" d="M12 1h10v10H12z"/><path fill="#05a6f0" d="M1 12h10v10H1z"/><path fill="#ffba08" d="M12 12h10v10H12z"/></svg>
+          Continue with Microsoft
+        </button>
+        <div class="privacy-note">Sign in with your Google or Microsoft work account. Your name, steps, proof, and team are visible to the rest of the team taking part.</div>
+      </div></div>
+    `;
+  },
+
+  bindLogin(){
+    const g = document.getElementById('btn-google');
+    const m = document.getElementById('btn-microsoft');
+    if(g) g.addEventListener('click', () => this.signInWithGoogle());
+    if(m) m.addEventListener('click', () => this.signInWithMicrosoft());
+    const back = document.getElementById('btn-back-provider');
+    if(back) back.addEventListener('click', () => this.switchIdentity());
+    const submitProfile = document.getElementById('btn-submit-profile');
+    if(submitProfile){
+      submitProfile.addEventListener('click', () => this.submitProfile(
+        document.getElementById('in-name').value,
+        document.getElementById('in-country').value
+      ));
+    }
+  },
+
+  renderAppShell(){
+    const me = this.state.users[this.state.identity.uid] || { role:'user' };
+    const status = this.getChallengeStatus();
+    const cfg = this.state.config;
+    let statusLabel = 'Not started yet';
+    if(status.started && !status.ended) statusLabel = `Week ${status.weekIndex+1} of ${cfg.weeks}`;
+    if(status.ended) statusLabel = 'Challenge complete';
+
+    return `
+      <div class="header">
+        <div>
+          <div class="title serif">${cfg.name || 'OH APAC Steps Challenge'}</div>
+          <div class="who">${this.state.identity.name} &nbsp;·&nbsp; <button id="btn-switch">sign out</button></div>
+        </div>
+        <div class="status-pill">${statusLabel}</div>
+      </div>
+      <div class="tabs">
+        <div class="tab ${this.state.view==='trail'?'active':''}" data-view="trail">My trail</div>
+        <div class="tab ${this.state.view==='myteam'?'active':''}" data-view="myteam">My team</div>
+        <div class="tab ${this.state.view==='leaderboard'?'active':''}" data-view="leaderboard">Leaderboard</div>
+        ${me.role==='admin' ? `<div class="tab ${this.state.view==='admin'?'active':''}" data-view="admin">Admin</div>` : ''}
+      </div>
+      <div id="tab-body">
+        ${this.state.view==='trail' ? this.renderTrail() : ''}
+        ${this.state.view==='myteam' ? this.renderMyTeam() : ''}
+        ${this.state.view==='leaderboard' ? this.renderLeaderboard() : ''}
+        ${this.state.view==='admin' && me.role==='admin' ? this.renderAdmin() : ''}
+      </div>
+      ${this.state.modal ? this.renderModal() : ''}
+    `;
+  },
+
+  renderTrail(){
+    const cfg = this.state.config;
+    const status = this.getChallengeStatus();
+    const myTotal = this.totalStepsOf(this.state.mySteps);
+
+    if(!status.started){
+      return `<div class="panel"><div class="empty">${cfg.startDate ? `The challenge starts on ${cfg.startDate} (Singapore time). Check back then.` : "The admin hasn't set a start date yet. Check back soon."}</div></div>`;
+    }
+
+    let trailHtml = `<div class="trail"><div class="trail-track">`;
+    for(let w=0; w<cfg.weeks; w++){
+      const weekTotal = this.totalStepsInRange(this.state.mySteps, w);
+      const proof = this.weekProofOf(this.state.mySteps, w);
+      const prevTotal = w>0 ? this.totalStepsInRange(this.state.mySteps, w-1) : 0;
+      const wStatus = this.getWeekStatus(w);
+      let dotClass = 'week-dot';
+      if(weekTotal) dotClass += proof ? ' done' : ' partial';
+      if(wStatus === 'editable') dotClass += ' today';
+      if(wStatus === 'future') dotClass += ' upcoming';
+      trailHtml += `<div class="trail-dot-wrap"><div class="trail-line-row">${w>0?'<div class="trail-line'+(prevTotal?' filled':'')+'"></div>':'<div style="flex:none;width:0;"></div>'}<div class="${dotClass}"></div>${w<cfg.weeks-1?'<div class="trail-line'+(weekTotal?' filled':'')+'"></div>':'<div style="flex:none;width:0;"></div>'}</div><div class="trail-dot-label">Week ${w+1}</div></div>`;
+    }
+    trailHtml += `</div></div>`;
+
+    const funHtml = this.renderFunStats(myTotal, "You've");
+
+    const bonusList = Object.values(this.state.bonus).filter(b => b.type==='individual' && b.active !== false);
+    let bonusHtml = '';
+    if(bonusList.length){
+      bonusHtml = `<div class="panel"><h3>Bonus challenges for you</h3>` + bonusList.map(b => {
+        const awarded = b.completed.includes(this.state.identity.uid);
+        return `<div class="challenge-card"><div class="ctop">
+          <div><span class="ctitle">${b.title}</span><span class="type-pill">Individual</span>${b.description ? `<div class="cdesc">${b.description}</div>` : ''}</div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
+            <span class="points-pill">${b.points} pts</span>
+            <span class="tag ${awarded?'tag-awarded':'tag-pending'}">${awarded?'Awarded':'Not yet awarded'}</span>
+          </div>
+        </div></div>`;
+      }).join('') + `</div>`;
+    }
+
+    const activeWeek = status.ended ? cfg.weeks - 1 : status.weekIndex;
+    let weekCards = '<div class="week-list">';
+    for(let w=0; w<=activeWeek; w++){
+      weekCards += this.renderWeekCard(w);
+    }
+    weekCards += '</div>';
+
+    return trailHtml + funHtml + bonusHtml + weekCards;
+  },
+
+  renderWeekCard(weekIndex){
+    const cfg = this.state.config;
+    const wStatus = this.getWeekStatus(weekIndex);
+    const weekTotal = this.totalStepsInRange(this.state.mySteps, weekIndex);
+    const proofEntry = this.weekProofOf(this.state.mySteps, weekIndex);
+    const dateRange = cfg.startDate ? this.weekDateRange(weekIndex) : '';
+
+    let tag = '';
+    if(wStatus === 'locked') tag = `<span class="tag tag-locked">Locked</span>`;
+    else if(wStatus === 'editable') tag = `<span class="tag tag-editable">Open</span>`;
+    else if(wStatus === 'future') tag = `<span class="tag tag-upcoming">Not yet</span>`;
+
+    let proofRow = '';
+    if(wStatus === 'editable'){
+      proofRow = `<div class="wbody" style="margin-bottom:12px;">
+        ${proofEntry ? `<img class="thumb" src="${proofEntry.proof}" data-role="thumb" data-src="${proofEntry.proof}">` : `<div class="thumb-placeholder">no proof</div>`}
+        <label class="file-label">${proofEntry ? 'Replace this week’s proof' : 'Upload proof for this week'}<input type="file" accept="image/*" data-week="${weekIndex}" data-role="proof-input"></label>
+        ${weekTotal && !proofEntry ? `<span class="tag tag-upcoming">Remember to add proof before the week locks</span>` : ''}
+      </div>`;
+    } else if(wStatus === 'locked'){
+      proofRow = `<div class="wbody" style="margin-bottom:12px;">
+        ${proofEntry ? `<img class="thumb" src="${proofEntry.proof}" data-role="thumb" data-src="${proofEntry.proof}">` : `<div class="thumb-placeholder">no proof</div>`}
+        <span class="steps-readout">Week total: ${weekTotal.toLocaleString()} steps</span>
+      </div>`;
+    }
+
+    let dayRows = '';
+    if(wStatus === 'editable' || wStatus === 'locked'){
+      dayRows = '<div class="day-list">';
+      for(let d=0; d<7; d++){
+        const i = weekIndex*7 + d;
+        const date = this.addDays(cfg.startDate, i);
+        const dayStatus = this.getDayStatus(i);
+        dayRows += this.renderDayRow(date, dayStatus);
+      }
+      dayRows += '</div>';
+    } else {
+      dayRows = `<span class="empty" style="padding:0;">Opens once Week ${weekIndex} finishes.</span>`;
+    }
+
+    return `<div class="week-card ${wStatus==='locked'?'locked':''}">
+      <div class="wtop"><div><span class="wname">Week ${weekIndex+1}</span>${dateRange?`<span class="wdates">${dateRange}</span>`:''}</div><div style="display:flex;align-items:center;gap:8px;">${weekTotal?`<span class="steps-readout">${weekTotal.toLocaleString()} steps</span>`:''}${tag}</div></div>
+      ${proofRow}
+      ${dayRows}
+    </div>`;
+  },
+
+  renderDayRow(date, dayStatus){
+    const md = this.formatDate(date);
+    const d = new Date(date + 'T00:00:00Z');
+    const dow = d.toLocaleDateString('en-US', { weekday:'short', timeZone:'UTC' });
+    const entry = this.state.mySteps.days[date];
+    const draftSteps = this.state.draftSteps[date];
+    const editable = dayStatus === 'editable' || dayStatus === 'editable-today';
+
+    let body = '';
+    if(editable){
+      const val = draftSteps !== undefined ? draftSteps : (entry ? entry.steps : '');
+      body = `
+        <input class="steps-input" type="number" min="0" placeholder="Steps" value="${val}" data-date="${date}" data-role="steps-input">
+        <button class="btn btn-primary btn-sm" data-date="${date}" data-role="save-day">Save</button>
+      `;
+    } else if(dayStatus === 'locked'){
+      body = entry ? `<span class="steps-readout">${entry.steps.toLocaleString()} steps</span>` : `<span class="empty" style="padding:0;">No entry</span>`;
+    } else {
+      body = `<span class="tag tag-upcoming">Not yet</span>`;
+    }
+
+    return `<div class="day-row ${dayStatus==='locked'?'locked':''}">
+      <div class="day-date"><div class="dow">${dow}</div><div class="num">${md}</div></div>
+      <div class="day-body">${body}</div>
+    </div>`;
+  },
+
+  // ---------- My Team ----------
+  renderMyTeam(){
+    if(!this.state.allStepsLoaded) return `<div class="panel"><div class="loading">Loading team info…</div></div>`;
+    const team = this.getMyTeam();
+    if(!team) return this.renderTeamBrowser();
+    return this.renderTeamRoster(team);
+  },
+
+  renderTeamBrowser(){
+    const teams = Object.values(this.state.teams);
+    const available = teams.filter(t => t.members.length < TEAM_SIZE_LIMIT);
+    const full = teams.filter(t => t.members.length >= TEAM_SIZE_LIMIT);
+
+    const teamRow = (t, joinable) => `<div class="team-card">
+      <div><div class="tname">${t.name}</div><div class="tmeta">${t.members.length}/${TEAM_SIZE_LIMIT} members · captain ${this.state.users[t.captainUid] ? this.state.users[t.captainUid].name : '—'}</div></div>
+      ${joinable ? `<button class="btn btn-primary btn-sm" data-role="join-team" data-teamid="${t.id}">Join</button>` : `<span class="tag tag-full">Full</span>`}
+    </div>`;
+
+    return `
+      <div class="panel">
+        <h3>Start or join a team</h3>
+        <div class="form-inline">
+          <div class="field" style="margin-bottom:0;flex:1;min-width:180px;"><label>New team name</label><input type="text" id="in-teamname" placeholder="Trail Blazers"></div>
+          <button class="btn btn-primary" id="btn-create-team">Create team</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Available teams (${available.length})</h3>
+        ${available.length ? available.map(t=>teamRow(t,true)).join('') : `<div class="empty">No open teams yet — start one above.</div>`}
+      </div>
+      ${full.length ? `<div class="panel"><h3>Full teams (${full.length})</h3>${full.map(t=>teamRow(t,false)).join('')}</div>` : ''}
+    `;
+  },
+
+  renderTeamRoster(team){
+    const isCaptain = team.captainUid === this.state.identity.uid;
+    const teamTotal = team.members.reduce((s,m)=> s + this.totalStepsOf(this.state.allSteps[m]), 0);
+    const funHtml = this.renderFunStats(teamTotal, `${team.name} has`);
+
+    const membersHtml = team.members.map(m => {
+      const u = this.state.users[m];
+      const isCap = m === team.captainUid;
+      return `<div class="member-row">
+        <div>${u ? u.name : m}${isCap ? '<span class="captain-tag">Captain</span>' : ''}</div>
+        ${isCaptain && !isCap ? `<button class="btn btn-sm btn-danger" data-role="remove-member" data-teamid="${team.id}" data-uid="${m}">Remove</button>` : ''}
+      </div>`;
+    }).join('');
+
+    const bonusList = Object.values(this.state.bonus).filter(b => b.type==='team' && b.active !== false);
+    let bonusHtml = '';
+    if(bonusList.length){
+      bonusHtml = `<div class="panel"><h3>Bonus challenges for your team</h3>` + bonusList.map(b => {
+        const awarded = b.completed.includes(team.id);
+        return `<div class="challenge-card"><div class="ctop">
+          <div><span class="ctitle">${b.title}</span><span class="type-pill">Team</span>${b.description ? `<div class="cdesc">${b.description}</div>` : ''}</div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
+            <span class="points-pill">${b.points} pts</span>
+            <span class="tag ${awarded?'tag-awarded':'tag-pending'}">${awarded?'Awarded':'Not yet awarded'}</span>
+          </div>
+        </div></div>`;
+      }).join('') + `</div>`;
+    }
+
+    return `
+      <div class="panel">
+        <h3>${team.name} <span class="tag tag-open" style="margin-left:8px;">${team.members.length}/${TEAM_SIZE_LIMIT}</span></h3>
+        ${membersHtml}
+        <div style="margin-top:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+          <div style="font-size:13px;color:var(--ink-soft);">Team total: ${teamTotal.toLocaleString()} steps</div>
+          <button class="btn btn-sm" data-role="leave-team">Leave team</button>
+        </div>
+      </div>
+      ${funHtml}
+      ${bonusHtml}
+    `;
+  },
+
+  // ---------- Leaderboard ----------
+  renderLeaderboard(){
+    if(!this.state.allStepsLoaded) return `<div class="panel"><div class="loading">Loading leaderboard…</div></div>`;
+    const cfg = this.state.config;
+    if(this.state.lbTab === null){
+      const st = this.getChallengeStatus();
+      this.state.lbTab = st.started ? `week-${Math.min(st.weekIndex, cfg.weeks-1)}` : 'week-0';
+    }
+    let subtabs = '';
+    for(let w=0; w<cfg.weeks; w++) subtabs += `<div class="subtab ${this.state.lbTab==='week-'+w?'active':''}" data-lb="week-${w}">Week ${w+1}</div>`;
+    subtabs += `<div class="subtab ${this.state.lbTab==='overall'?'active':''}" data-lb="overall">Overall</div>`;
+
+    const sel = this.state.lbTab === 'overall' ? 'overall' : Number(this.state.lbTab.split('-')[1]);
+
+    const individuals = Object.values(this.state.users).map(u => {
+      let value = this.totalStepsInRange(this.state.allSteps[u.uid], sel);
+      if(sel === 'overall') value += this.individualBonusPoints(u.uid);
+      return { name: u.name, value };
+    }).sort((a,b)=>b.value-a.value);
+
+    const teams = Object.values(this.state.teams).map(t => {
+      let value = t.members.reduce((s,m)=> s + this.totalStepsInRange(this.state.allSteps[m], sel), 0);
+      if(sel === 'overall') value += this.teamBonusPoints(t.id);
+      return { name: t.name, value };
+    }).sort((a,b)=>b.value-a.value);
+
+    const maxTeam = Math.max(1, ...teams.map(t=>t.value));
+    const maxInd = Math.max(1, ...individuals.map(i=>i.value));
+    const unit = sel === 'overall' ? 'pts' : 'steps';
+
+    return `
+      <div class="subtabs">${subtabs}</div>
+      <div class="panel">
+        <h3>Team rankings</h3>
+        ${teams.length ? teams.map((t,i)=>`
+          <div class="lb-row">
+            <div class="lb-rank">${i+1}</div>
+            <div class="lb-name">${t.name}</div>
+            <div class="lb-bar-wrap team"><div class="lb-bar team" style="width:${(t.value/maxTeam*100).toFixed(1)}%"></div></div>
+            <div class="lb-total">${t.value.toLocaleString()} ${unit}</div>
+          </div>`).join('') : `<div class="empty">No teams yet.</div>`}
+      </div>
+      <div class="panel">
+        <h3>Individual rankings</h3>
+        ${individuals.length ? individuals.map((u,i)=>`
+          <div class="lb-row">
+            <div class="lb-rank">${i+1}</div>
+            <div class="lb-name">${u.name}</div>
+            <div class="lb-bar-wrap"><div class="lb-bar" style="width:${(u.value/maxInd*100).toFixed(1)}%"></div></div>
+            <div class="lb-total">${u.value.toLocaleString()} ${unit}</div>
+          </div>`).join('') : `<div class="empty">No one has joined yet.</div>`}
+      </div>
+    `;
+  },
+
+  // ---------- Admin ----------
+  renderAdmin(){
+    const cfg = this.state.config;
+    let html = `
+      <div class="panel">
+        <h3>Challenge settings</h3>
+        <div class="config-row">
+          <div class="field" style="margin-bottom:0;"><label>Start date (Singapore time)</label><input type="date" id="in-startdate" value="${cfg.startDate || ''}"></div>
+          <button class="btn btn-primary" id="btn-save-startdate">Save date</button>
+        </div>
+        <div class="config-row" style="margin-top:14px;">
+          <div class="field" style="margin-bottom:0;"><label>Maximum steps per week (optional)</label><input type="number" id="in-stepslimit" min="1" placeholder="No limit" value="${cfg.stepsLimit || ''}"></div>
+          <button class="btn btn-primary" id="btn-save-limit">Save limit</button>
+        </div>
+        <div style="margin-top:16px;"><button class="btn btn-danger btn-sm" id="btn-reset">Reset challenge data</button></div>
+      </div>
+    `;
+
+    html += this.renderAdminBonus();
+
+    if(!this.state.allStepsLoaded){
+      html += `<div class="panel"><div class="loading">Loading participant status…</div></div>`;
+      return html;
+    }
+
+    const status = this.getChallengeStatus();
+    let users = Object.values(this.state.users).map(u => ({ u, issues: this.missingIssues(u) }));
+    users.sort((a,b) => b.issues.length - a.issues.length || a.u.name.localeCompare(b.u.name));
+
+    html += `<div class="panel"><h3>Participants (${users.length}) <span style="font-weight:400;font-size:12px;color:var(--ink-soft);">sorted by missing proof</span></h3>`;
+    html += `<div style="margin-bottom:12px;"><button class="btn btn-sm" id="btn-export-participants">Export participants (CSV)</button> <button class="btn btn-sm" id="btn-export-teams">Export teams (CSV)</button></div>`;
+    if(!cfg.startDate){
+      html += `<div class="empty">Set a start date above to begin tracking weekly status.</div></div>`;
+    } else {
+      html += `<div class="table-wrap"><table class="roster"><thead><tr><th>Name</th><th>Email</th><th>Team</th>`;
+      for(let w=0; w<cfg.weeks; w++) html += `<th>Week ${w+1}</th>`;
+      html += `<th>Total</th><th>Flag</th><th>Role</th><th></th></tr></thead><tbody>`;
+
+      users.forEach(({u, issues}) => {
+        const rec = this.state.allSteps[u.uid] || { days:{}, weekProof:{} };
+        const team = u.teamId ? this.state.teams[u.teamId] : null;
+        const total = this.totalStepsOf(rec);
+        html += `<tr><td>${u.name}</td><td>${u.email}</td><td>${team ? team.name : '—'}</td>`;
+        for(let w=0; w<cfg.weeks; w++){
+          const weekTotal = this.totalStepsInRange(rec, w);
+          const proof = this.weekProofOf(rec, w);
+          const wStatus = this.getWeekStatus(w);
+          let cell;
+          if(!weekTotal){
+            cell = wStatus === 'locked' ? '<span style="color:var(--rust);">missing</span>' : (wStatus==='editable' ? 'pending' : '—');
+          } else {
+            cell = weekTotal.toLocaleString() + (proof ? ' ✓' : ' <span style="color:var(--rust);">⚠ no proof</span>');
+          }
+          html += `<td class="week-cell">${cell}</td>`;
+        }
+        html += `<td>${total.toLocaleString()}</td>`;
+        html += `<td>${issues.length ? `<span class="tag tag-flag">⚠ ${issues.length}</span>` : ''}</td>`;
+        html += `<td><span class="role-pill ${u.role==='admin'?'admin':''}">${u.role}</span></td>`;
+        html += `<td style="white-space:nowrap;">
+          <button class="btn btn-sm" data-role="view-user" data-uid="${u.uid}">View</button>
+          <button class="btn btn-sm" data-role="toggle-role" data-uid="${u.uid}" data-newrole="${u.role==='admin'?'user':'admin'}">${u.role==='admin'?'Demote':'Promote'}</button>
+        </td>`;
+        html += `</tr>`;
+      });
+      html += `</tbody></table></div></div>`;
+    }
+
+    const teams = Object.values(this.state.teams);
+    html += `<div class="panel"><h3>Teams (${teams.length})</h3>`;
+    html += teams.length ? teams.map(t => `<div class="team-card">
+        <div><div class="tname">${t.name}</div><div class="tmeta">${t.members.length}/${TEAM_SIZE_LIMIT} · captain ${this.state.users[t.captainUid] ? this.state.users[t.captainUid].name : '—'} · ${t.members.map(m=>this.state.users[m]?this.state.users[m].name:m).join(', ')}</div></div>
+      </div>`).join('') : `<div class="empty">No teams formed yet.</div>`;
+    html += `</div>`;
+
+    return html;
+  },
+
+  renderAdminBonus(){
+    const f = this.state.bonusForm;
+    let html = `<div class="panel">
+      <h3>Bonus challenges</h3>
+      <div class="form-inline">
+        <div class="field" style="margin-bottom:0;flex:2;min-width:160px;"><label>Title</label><input type="text" id="in-bonus-title" value="${f.title}" placeholder="Weekend hike"></div>
+        <div class="field" style="margin-bottom:0;flex:3;min-width:180px;"><label>Description (optional)</label><input type="text" id="in-bonus-desc" value="${f.description}" placeholder="Complete a hike over the weekend"></div>
+        <div class="field" style="margin-bottom:0;width:90px;"><label>Points</label><input type="number" id="in-bonus-points" value="${f.points}" min="1"></div>
+        <div class="field" style="margin-bottom:0;width:120px;"><label>For</label>
+          <select id="in-bonus-type">
+            <option value="individual" ${f.type==='individual'?'selected':''}>Individuals</option>
+            <option value="team" ${f.type==='team'?'selected':''}>Teams</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" id="btn-add-bonus">Add challenge</button>
+      </div>
+    </div>`;
+
+    const list = Object.values(this.state.bonus).sort((a,b)=> (b.createdAt||'').localeCompare(a.createdAt||''));
+    if(!list.length) return html;
+
+    html += `<div class="panel"><h3>Manage &amp; award challenges</h3>`;
+    list.forEach(b => {
+      const targets = b.type === 'individual'
+        ? Object.values(this.state.users).map(u => ({ id:u.uid, name:u.name }))
+        : Object.values(this.state.teams).map(t => ({ id:t.id, name:t.name }));
+      html += `<div class="challenge-card">
+        <div class="ctop">
+          <div><span class="ctitle">${b.title}</span><span class="type-pill">${b.type==='individual'?'Individual':'Team'}</span>${b.active===false?'<span class="type-pill">Disabled</span>':''}${b.description?`<div class="cdesc">${b.description}</div>`:''}</div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <span class="points-pill">${b.points} pts</span>
+            <button class="btn btn-sm" data-role="toggle-bonus-active" data-id="${b.id}">${b.active===false?'Enable':'Disable'}</button>
+            <button class="btn btn-sm btn-danger" data-role="delete-bonus" data-id="${b.id}">Delete</button>
+          </div>
+        </div>
+        <div class="award-grid">
+          ${targets.length ? targets.map(t => `<div class="award-chip ${b.completed.includes(t.id)?'awarded':''}" data-role="toggle-award" data-id="${b.id}" data-target="${t.id}">${b.completed.includes(t.id)?'✓ ':''}${t.name}</div>`).join('') : `<span class="empty" style="padding:0;">No ${b.type==='individual'?'participants':'teams'} yet.</span>`}
+        </div>
+      </div>`;
+    });
+    html += `</div>`;
+    return html;
+  },
+
+  renderModal(){
+    const m = this.state.modal;
+    if(m.type === 'image'){
+      return `<div class="modal-overlay" data-role="modal-overlay"><div class="modal">
+        <button class="modal-close" data-role="modal-close">&times;</button>
+        <div class="serif" style="font-size:16px;">Proof</div>
+        <img src="${m.src}">
+      </div></div>`;
+    }
+    if(m.type === 'userDetail'){
+      const u = this.state.users[m.uid];
+      const rec = this.state.allSteps[m.uid] || { days:{}, weekProof:{} };
+      const cfg = this.state.config;
+      let weekRows = '';
+      for(let w=0; w<cfg.weeks; w++){
+        const weekTotal = this.totalStepsInRange(rec, w);
+        const proof = this.weekProofOf(rec, w);
+        weekRows += `<tr><td>Week ${w+1}</td><td>${weekTotal ? weekTotal.toLocaleString() : '—'}</td><td>${proof ? `<img class="thumb" src="${proof.proof}" data-role="thumb" data-src="${proof.proof}">` : '—'}</td></tr>`;
+      }
+      let dayRows = '';
+      if(cfg.startDate){
+        for(let i=0; i<cfg.weeks*7; i++){
+          const date = this.addDays(cfg.startDate, i);
+          const entry = rec.days[date];
+          dayRows += `<tr><td>${this.formatDate(date)}</td><td>${entry ? entry.steps.toLocaleString() : '—'}</td></tr>`;
+        }
+      }
+      return `<div class="modal-overlay" data-role="modal-overlay"><div class="modal">
+        <button class="modal-close" data-role="modal-close">&times;</button>
+        <div class="serif" style="font-size:18px;">${u.name}</div>
+        <div style="color:var(--ink-soft);font-size:13px;">${u.email}</div>
+        <table><thead><tr><th>Week</th><th>Total steps</th><th>Proof</th></tr></thead><tbody>${weekRows}</tbody></table>
+        <div class="serif" style="font-size:14px;margin-top:16px;">Daily breakdown</div>
+        <table><thead><tr><th>Day</th><th>Steps</th></tr></thead><tbody>${dayRows}</tbody></table>
+      </div></div>`;
+    }
+    return '';
+  },
+
+  bindApp(){
+    const root = document.getElementById('app');
+
+    const switchBtn = document.getElementById('btn-switch');
+    if(switchBtn) switchBtn.addEventListener('click', () => this.switchIdentity());
+
+    root.querySelectorAll('.tab').forEach(el => el.addEventListener('click', () => this.setView(el.dataset.view)));
+    root.querySelectorAll('.subtab').forEach(el => el.addEventListener('click', () => { this.state.lbTab = el.dataset.lb; this.render(); }));
+
+    root.querySelectorAll('[data-role="save-day"]').forEach(el => el.addEventListener('click', () => this.saveDay(el.dataset.date)));
+    root.querySelectorAll('[data-role="steps-input"]').forEach(el => el.addEventListener('input', () => this.state.draftSteps[el.dataset.date] = el.value));
+    root.querySelectorAll('[data-role="proof-input"]').forEach(el => el.addEventListener('change', () => this.handleWeekProofFile(Number(el.dataset.week), el)));
+    root.querySelectorAll('[data-role="thumb"]').forEach(el => el.addEventListener('click', () => this.openModal({ type:'image', src: el.dataset.src })));
+
+    const startDateBtn = document.getElementById('btn-save-startdate');
+    if(startDateBtn) startDateBtn.addEventListener('click', () => {
+      const val = document.getElementById('in-startdate').value;
+      if(val) this.setStartDate(val);
+    });
+    const limitBtn = document.getElementById('btn-save-limit');
+    if(limitBtn) limitBtn.addEventListener('click', () => this.setStepsLimit(document.getElementById('in-stepslimit').value));
+    const resetBtn = document.getElementById('btn-reset');
+    if(resetBtn) resetBtn.addEventListener('click', () => this.resetChallenge());
+
+    const exportP = document.getElementById('btn-export-participants');
+    if(exportP) exportP.addEventListener('click', () => this.exportParticipantsCSV());
+    const exportT = document.getElementById('btn-export-teams');
+    if(exportT) exportT.addEventListener('click', () => this.exportTeamsCSV());
+
+    root.querySelectorAll('[data-role="toggle-role"]').forEach(el => el.addEventListener('click', () => this.setRole(el.dataset.uid, el.dataset.newrole)));
+    root.querySelectorAll('[data-role="view-user"]').forEach(el => el.addEventListener('click', () => this.openModal({ type:'userDetail', uid: el.dataset.uid })));
+
+    root.querySelectorAll('[data-role="modal-close"], [data-role="modal-overlay"]').forEach(el => {
+      el.addEventListener('click', (e) => { if(e.target === el) this.closeModal(); });
+    });
+
+    const createTeamBtn = document.getElementById('btn-create-team');
+    if(createTeamBtn) createTeamBtn.addEventListener('click', () => this.createTeam(document.getElementById('in-teamname').value));
+    root.querySelectorAll('[data-role="join-team"]').forEach(el => el.addEventListener('click', () => this.joinTeam(el.dataset.teamid)));
+    root.querySelectorAll('[data-role="remove-member"]').forEach(el => el.addEventListener('click', () => this.removeMember(el.dataset.teamid, el.dataset.uid)));
+    const leaveBtn = root.querySelector('[data-role="leave-team"]');
+    if(leaveBtn) leaveBtn.addEventListener('click', () => this.leaveTeam());
+
+    const addBonusBtn = document.getElementById('btn-add-bonus');
+    if(addBonusBtn) addBonusBtn.addEventListener('click', () => {
+      this.state.bonusForm = {
+        title: document.getElementById('in-bonus-title').value,
+        description: document.getElementById('in-bonus-desc').value,
+        points: document.getElementById('in-bonus-points').value,
+        type: document.getElementById('in-bonus-type').value
+      };
+      this.addBonusChallenge();
+    });
+    root.querySelectorAll('[data-role="toggle-bonus-active"]').forEach(el => el.addEventListener('click', () => this.toggleBonusActive(el.dataset.id)));
+    root.querySelectorAll('[data-role="delete-bonus"]').forEach(el => el.addEventListener('click', () => this.deleteBonusChallenge(el.dataset.id)));
+    root.querySelectorAll('[data-role="toggle-award"]').forEach(el => el.addEventListener('click', () => this.toggleAward(el.dataset.id, el.dataset.target)));
+  }
+};
+
+window.App = App;
+App.init();
+</script>
+</body>
+</html>
