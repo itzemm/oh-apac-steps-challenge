@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>OH APAC — Steps Challenge</title>
+<link rel="icon" type="image/png" href="assets/otters/otter-sg.png">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
 
@@ -93,6 +94,26 @@ img{max-width:100%;}
 .week-dot.today{box-shadow:0 0 0 3px var(--amber-tint);border-color:var(--amber);}
 .week-dot.upcoming{opacity:0.5;}
 .trail-dot-label{font-size:12px;color:var(--ink-soft);margin-top:6px;}
+.trail-otter{position:absolute;top:-30px;left:50%;transform:translateX(-50%);width:28px;height:28px;object-fit:contain;filter:drop-shadow(0 2px 2px rgba(0,0,0,0.25));}
+
+/* ---------- Otter mascots ---------- */
+.header-logo{width:32px;height:32px;object-fit:contain;vertical-align:middle;margin-right:8px;}
+.login-hero-otter{display:block;margin:0 auto 14px;width:130px;height:auto;}
+.lb-hero{display:block;margin:0 auto 10px;width:150px;height:auto;}
+.race-panel h3{margin-bottom:2px;}
+.race-caption{font-size:12px;color:var(--ink-soft);margin:12px 0 6px;}
+.race-caption:first-of-type{margin-top:4px;}
+.race-row{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
+.race-row:last-child{margin-bottom:0;}
+.race-name{width:80px;flex-shrink:0;font-size:12px;color:var(--ink-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.race-lane-track{position:relative;flex:1;min-width:0;height:40px;border-radius:8px;
+  background:linear-gradient(180deg,#BFE3E8 0%,#8FCBD6 55%,#6FB8C6 100%);
+  border:1px solid var(--line);overflow:visible;}
+.race-lane-otter{position:absolute;top:1px;width:36px;height:36px;object-fit:contain;
+  transform:translateX(-50%);transition:left 0.6s ease;
+  filter:drop-shadow(0 2px 2px rgba(0,0,0,0.25));}
+.race-lane-finish{position:absolute;right:6px;top:3px;bottom:3px;width:2px;
+  background:repeating-linear-gradient(180deg,#fff 0 5px,rgba(31,42,31,0.4) 5px 10px);}
 
 /* ---------- Week cards ---------- */
 .week-list{display:flex;flex-direction:column;gap:12px;margin-bottom:6px;}
@@ -1045,6 +1066,7 @@ const App = {
     }
     return `
       <div class="login-wrap"><div class="login-card">
+        <img class="login-hero-otter" src="assets/otters/otter-duo.png" alt="">
         <div class="login-hero">OH APAC Steps Challenge</div>
         <div class="login-sub">A team steps challenge, wherever you're logging in from.</div>
         ${this.state.error ? `<div class="notice">${this.state.error}</div>` : ''}
@@ -1083,7 +1105,7 @@ const App = {
     return `
       <div class="header">
         <div>
-          <div class="title serif">${cfg.name || 'OH APAC Steps Challenge'}</div>
+          <div class="title serif"><img class="header-logo" src="assets/otters/otter-lion.png" alt="">${cfg.name || 'OH APAC Steps Challenge'}</div>
           <div class="who">${this.state.identity.name} &nbsp;·&nbsp; <button id="btn-switch">sign out</button></div>
         </div>
         <div class="status-pill">${statusLabel}</div>
@@ -1123,7 +1145,8 @@ const App = {
       if(weekTotal) dotClass += proof ? ' done' : ' partial';
       if(wStatus === 'editable') dotClass += ' today';
       if(wStatus === 'future') dotClass += ' upcoming';
-      trailHtml += `<div class="trail-dot-wrap"><div class="trail-line-row">${w>0?'<div class="trail-line'+(prevTotal?' filled':'')+'"></div>':'<div style="flex:none;width:0;"></div>'}<div class="${dotClass}"></div>${w<cfg.weeks-1?'<div class="trail-line'+(weekTotal?' filled':'')+'"></div>':'<div style="flex:none;width:0;"></div>'}</div><div class="trail-dot-label">Week ${w+1}</div></div>`;
+      const otterMarker = wStatus === 'editable' ? `<img class="trail-otter" src="assets/otters/otter-lion.png" alt="">` : '';
+      trailHtml += `<div class="trail-dot-wrap">${otterMarker}<div class="trail-line-row">${w>0?'<div class="trail-line'+(prevTotal?' filled':'')+'"></div>':'<div style="flex:none;width:0;"></div>'}<div class="${dotClass}"></div>${w<cfg.weeks-1?'<div class="trail-line'+(weekTotal?' filled':'')+'"></div>':'<div style="flex:none;width:0;"></div>'}</div><div class="trail-dot-label">Week ${w+1}</div></div>`;
     }
     trailHtml += `</div></div>`;
 
@@ -1300,7 +1323,7 @@ const App = {
 
     return `
       <div class="panel">
-        <h3>${team.name} <span class="tag tag-open" style="margin-left:8px;">${team.members.length}/${TEAM_SIZE_LIMIT}</span></h3>
+        <h3><img class="header-logo" src="assets/otters/otter-sg.png" alt="">${team.name} <span class="tag tag-open" style="margin-left:8px;">${team.members.length}/${TEAM_SIZE_LIMIT}</span></h3>
         ${membersHtml}
         <div style="margin-top:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
           <div style="font-size:13px;color:var(--ink-soft);">Team total: ${teamTotal.toLocaleString()} steps</div>
@@ -1313,6 +1336,25 @@ const App = {
   },
 
   // ---------- Leaderboard ----------
+  // One dedicated lane per entry (like real swim lanes) so otters never
+  // overlap even when scores are close — each otter's position along its
+  // lane is relative to the group's current leader, and moves further right
+  // as more steps come in, since render() re-derives this from live totals.
+  renderRaceTrack(entries, otterSrc){
+    if(!entries.length) return `<div class="empty">No one in this race yet.</div>`;
+    const max = Math.max(1, ...entries.map(e=>e.value));
+    return entries.map(e => {
+      const pct = Math.min(100, Math.max(2, (e.value/max)*100));
+      return `<div class="race-row">
+        <div class="race-name">${e.name}</div>
+        <div class="race-lane-track">
+          <img class="race-lane-otter" src="${otterSrc}" alt="" style="left:${pct.toFixed(1)}%">
+          <div class="race-lane-finish"></div>
+        </div>
+      </div>`;
+    }).join('');
+  },
+
   renderLeaderboard(){
     if(!this.state.allStepsLoaded) return `<div class="panel"><div class="loading">Loading leaderboard…</div></div>`;
     const cfg = this.state.config;
@@ -1344,6 +1386,14 @@ const App = {
 
     return `
       <div class="subtabs">${subtabs}</div>
+      <div class="panel race-panel">
+        <img class="lb-hero" src="assets/otters/otter-selfie.png" alt="">
+        <h3>🏁 The Race</h3>
+        <div class="race-caption">Teams</div>
+        ${this.renderRaceTrack(teams, 'assets/otters/otter-sg.png')}
+        <div class="race-caption">Individuals</div>
+        ${this.renderRaceTrack(individuals, 'assets/otters/otter-lion.png')}
+      </div>
       <div class="panel">
         <h3>Team rankings</h3>
         ${teams.length ? teams.map((t,i)=>`

@@ -9,6 +9,7 @@ Live sites:
 ## How it's built
 
 - `index.html` — the entire app (markup, styles, and JS in one file, no build step, no server).
+- `assets/otters/` — the otter mascot artwork. One otter design is the "individual" racer, another the "team" racer; both appear as the header logo, the login screen, and — on the Leaderboard tab — a "🏁 The Race" section where each person/team gets its own lane and their otter's position is driven live by their current step total relative to the group leader. Also rides the current week's dot on the "My trail" progress line.
 - Auth: Firebase Authentication, Google sign-in only.
 - Data: Cloud Firestore, with these collections:
   - `config/main` — challenge name, start date, number of weeks, optional weekly step limit.
