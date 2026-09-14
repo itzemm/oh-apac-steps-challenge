@@ -1,16 +1,18 @@
 # OH APAC Steps Challenge
 
-A single-file web app for running a team steps challenge — daily step logging, weekly proof photos, teams, a leaderboard, bonus challenges, and an admin console. Sign-in is Google or Microsoft only; a user's first sign-in creates their profile, and admins can promote/demote other users from the Admin tab.
+A single-file web app for running a team steps challenge — daily step logging, weekly proof photos, teams, a leaderboard, bonus challenges, and an admin console. Sign-in is Google only; a user's first sign-in creates their profile, and admins can promote/demote other users from the Admin tab.
 
-Live site (after GitHub Pages finishes deploying): **https://itzemm.github.io/oh-apac-steps-challenge/**
+Live sites:
+- GitHub Pages: **https://itzemm.github.io/oh-apac-steps-challenge/**
+- Render: set up per **Deploying on Render.com** below.
 
 ## How it's built
 
-- `index.html` — the entire app (markup, styles, and JS in one file, no build step).
-- Auth: Firebase Authentication, Google + Microsoft (`microsoft.com`) OAuth providers only.
+- `index.html` — the entire app (markup, styles, and JS in one file, no build step, no server).
+- Auth: Firebase Authentication, Google sign-in only.
 - Data: Cloud Firestore, with these collections:
   - `config/main` — challenge name, start date, number of weeks, optional weekly step limit.
-  - `users/{uid}` — one profile per signer-in, keyed by their Firebase Auth uid (`name`, `email`, `country`, `provider`, `role: 'admin'|'user'`, `teamId`).
+  - `users/{uid}` — one profile per signed-in user, keyed by their Firebase Auth uid (`name`, `email`, `country`, `provider`, `role: 'admin'|'user'`, `teamId`).
   - `teams/{teamId}` — `name`, `captainUid`, `members: [uid, ...]`.
   - `bonus/{bonusId}` — admin-authored bonus challenges and who/which team has been awarded them.
   - `steps/{uid}` — each user's daily step counts and weekly proof-photo (compressed, stored inline as a JPEG data URL).
@@ -22,25 +24,49 @@ The account with email **chenjiayi25@gmail.com** automatically becomes admin the
 
 ## One-time setup still needed
 
-This code is pushed and (once Pages finishes its first build) live, but a few things only you can do from the Firebase/Microsoft/GitHub dashboards:
+A few things only you can do from the Firebase dashboard:
 
 1. **Enable Google sign-in** (if not already): Firebase Console → your project → Authentication → Sign-in method → enable Google.
-2. **Enable Microsoft sign-in**: Authentication → Sign-in method → Add new provider → Microsoft. This needs an app registration in the [Microsoft Entra admin center](https://entra.microsoft.com) (Azure AD): register an app, copy its **Application (client) ID** and a **client secret** into the Firebase provider config, and add the redirect URI Firebase shows you to the Azure app's "Redirect URIs" list. [Firebase's guide](https://firebase.google.com/docs/auth/web/microsoft-oauth) walks through this.
-3. **Create the Firestore database** if you haven't yet: Firebase Console → Firestore Database → Create database (Production mode, any region close to your team is fine).
-4. **Deploy the security rules** in `firestore.rules` (they are not live until you deploy them):
+2. **Create the Firestore database** if you haven't yet: Firebase Console → Firestore Database → Create database (Production mode, any region close to your team is fine).
+3. **Deploy the security rules** in `firestore.rules` (they are not live until you deploy them):
    ```bash
    npm install -g firebase-tools
    firebase login
    firebase deploy --only firestore:rules
    ```
    Run this from inside this project folder.
-5. **Authorize the live domain** for sign-in: Authentication → Settings → Authorized domains → add `itzemm.github.io`. This one domain covers every GitHub Pages site under this account, including this repo's. (`localhost` is already authorized by default, for local testing.)
+4. **Authorize every domain the site is served from** for sign-in: Authentication → Settings → Authorized domains. Add:
+   - `itzemm.github.io` (covers GitHub Pages)
+   - your Render domain, e.g. `oh-apac-steps-challenge.onrender.com` (or your custom domain, once you have one)
 
-Until steps 1–5 are done, the sign-in buttons will show a "sign-in method isn't enabled yet" / "domain isn't authorized" message rather than actually failing silently.
+   (`localhost` is already authorized by default, for local testing.)
+
+Until steps 1–4 are done, the sign-in button will show a "sign-in method isn't enabled yet" / "domain isn't authorized" message rather than actually failing silently.
+
+## Deploying on Render.com
+
+This is a static site — no server, no build output, nothing to compile — so Render needs almost nothing from you.
+
+**Option A — connect the repo in the Render dashboard:**
+1. New → Static Site → connect the `oh-apac-steps-challenge` GitHub repo.
+2. Build command: leave blank (or `echo "no build"`).
+3. Publish directory: `.` (repo root — that's where `index.html` lives).
+4. Create Static Site. Render gives you a URL like `https://oh-apac-steps-challenge.onrender.com`.
+
+**Option B — Blueprint (Infrastructure as Code):** this repo already includes `render.yaml`. In the Render dashboard, New → Blueprint → select this repo, and Render reads `render.yaml` and creates the static site automatically with the settings above pre-filled.
+
+### Environment variables to set in Render
+
+**None are required.** This surprises people coming from apps with a backend, but it's correct here:
+
+- The Firebase Web config (`apiKey`, `authDomain`, `projectId`, etc.) hardcoded in `index.html` is **not a secret** — Firebase's own docs are explicit about this. It's a public client identifier, safe to ship in source, the same way it's safe to view in any browser's dev tools on any Firebase web app. Actual access control lives in `firestore.rules` (who can read/write what) and Firebase Auth's authorized-domains list (who can even open a login popup) — not in hiding this config.
+- This is a static site with no server process, so there is no `process.env` for a runtime environment variable to land in anyway. Render's env vars on a Static Site only affect the **build step**, and this site has no build step.
+
+The only Render-side action item is step 4 above: add your Render URL to Firebase's authorized domains once you know it, or sign-in will fail with an "unauthorized domain" error.
 
 ## Local development
 
-No build step — just open `index.html` in a browser, or serve the folder locally (e.g. `npx serve .`). Firestore reads/writes and Google/Microsoft sign-in all work against the same live Firebase project, so treat local runs as touching real data.
+No build step — just open `index.html` in a browser, or serve the folder locally (e.g. `npx serve .`). Firestore reads/writes and Google sign-in all work against the same live Firebase project, so treat local runs as touching real data.
 
 ## Security model (why the rules are shaped this way)
 

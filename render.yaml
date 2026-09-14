@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: oh-apac-steps-challenge
+    runtime: static
+    buildCommand: "echo 'static site, no build step needed'"
+    staticPublishPath: .
+    pullRequestPreviewsEnabled: false

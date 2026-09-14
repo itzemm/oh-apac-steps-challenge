@@ -201,7 +201,7 @@ table.roster td{padding:9px 8px;border-bottom:1px solid var(--line);vertical-ali
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
 import {
-  getAuth, GoogleAuthProvider, OAuthProvider, signInWithPopup,
+  getAuth, GoogleAuthProvider, signInWithPopup,
   onAuthStateChanged, signOut
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
 import {
@@ -221,7 +221,6 @@ const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
 const db = getFirestore(fbApp);
 const googleProvider = new GoogleAuthProvider();
-const microsoftProvider = new OAuthProvider('microsoft.com');
 
 // The account that always becomes admin the first time it creates a profile.
 // Additional admins can then be promoted from the Admin tab.
@@ -366,18 +365,6 @@ const App = {
       this.render();
     }
   },
-  async signInWithMicrosoft(){
-    this.state.error = null;
-    this.state.signingIn = true;
-    this.render();
-    try{
-      await signInWithPopup(auth, microsoftProvider);
-    }catch(e){
-      this.state.error = this.friendlyAuthError(e);
-      this.state.signingIn = false;
-      this.render();
-    }
-  },
   async submitProfile(name, country){
     name = name.trim();
     country = country.trim();
@@ -386,10 +373,9 @@ const App = {
     const user = this.state.pendingUser;
     const email = (user.email || '').toLowerCase();
     const isOwner = email === OWNER_ADMIN_EMAIL;
-    const providerId = (user.providerData[0] && user.providerData[0].providerId) || '';
     const profile = {
       name, email, country,
-      provider: providerId.includes('microsoft') ? 'microsoft' : 'google',
+      provider: 'google',
       role: isOwner ? 'admin' : 'user',
       joinedAt: new Date().toISOString(),
       teamId: null
@@ -837,20 +823,14 @@ const App = {
           <svg class="provider-icon" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3c-1.6 4.6-6 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.5 6 29.5 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.2-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.6 15.9 18.9 13 24 13c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.5 7 29.5 5 24 5c-7.5 0-14 4.2-17.7 10.4z"/><path fill="#4CAF50" d="M24 44c5.4 0 10.3-1.9 14-5.1l-6.5-5.4C29.4 35.3 26.8 36 24 36c-5.3 0-9.7-3.4-11.3-8.1l-6.6 5C9.9 39.6 16.4 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.1-4.1 5.5l6.5 5.4C41.5 35.8 44 30.3 44 24c0-1.2-.1-2.4-.4-3.5z"/></svg>
           Continue with Google
         </button>
-        <button class="provider-btn" id="btn-microsoft" ${this.state.signingIn ? 'disabled' : ''}>
-          <svg class="provider-icon" viewBox="0 0 23 23"><path fill="#f35325" d="M1 1h10v10H1z"/><path fill="#81bc06" d="M12 1h10v10H12z"/><path fill="#05a6f0" d="M1 12h10v10H1z"/><path fill="#ffba08" d="M12 12h10v10H12z"/></svg>
-          Continue with Microsoft
-        </button>
-        <div class="privacy-note">Sign in with your Google or Microsoft work account. Your name, steps, proof, and team are visible to the rest of the team taking part.</div>
+        <div class="privacy-note">Sign in with your Google work account. Your name, steps, proof, and team are visible to the rest of the team taking part.</div>
       </div></div>
     `;
   },
 
   bindLogin(){
     const g = document.getElementById('btn-google');
-    const m = document.getElementById('btn-microsoft');
     if(g) g.addEventListener('click', () => this.signInWithGoogle());
-    if(m) m.addEventListener('click', () => this.signInWithMicrosoft());
     const back = document.getElementById('btn-back-provider');
     if(back) back.addEventListener('click', () => this.switchIdentity());
     const submitProfile = document.getElementById('btn-submit-profile');
