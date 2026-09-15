@@ -37,9 +37,12 @@ async function main() {
       name: displayName, email, country: '', provider: 'password', role: 'admin',
       joinedAt: new Date().toISOString(), teamId: null, mustChangePassword: true
     });
+    console.log('Created its Firestore profile (role: admin).');
   } else if (existing.data().role !== 'admin') {
     await userRef.update({ role: 'admin' });
-    console.log('Promoted existing account to admin.');
+    console.log('Profile already existed — promoted it to admin.');
+  } else {
+    console.log('Profile already existed and is already admin — nothing to change.');
   }
   console.log('Done.');
 }

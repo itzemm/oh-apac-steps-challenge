@@ -42,8 +42,10 @@ async function ensureUser(auth, db, { name, username, teamId, role }) {
       name, email, country: '', provider: 'password', role,
       joinedAt: new Date().toISOString(), teamId, mustChangePassword: true
     });
+    console.log(`    -> created Firestore profile, assigned to team`);
   } else if (existing.data().teamId !== teamId) {
     await userRef.update({ teamId });
+    console.log(`    -> profile existed, updated team assignment`);
   }
   return userRecord.uid;
 }
