@@ -1,6 +1,8 @@
 # OH APAC Steps Challenge
 
-A single-file web app for running a team steps challenge — daily step logging, weekly proof photos, teams, a leaderboard, bonus challenges, and an admin console. Sign-in is Google only; a user's first sign-in creates their profile, and admins can promote/demote other users from the Admin tab. Admins can also randomly audit a participant's proof photos with AI (via a small server-side proxy — see below) and stamp a week as verified once checked.
+A single-file web app for running a team steps challenge — daily step logging, weekly proof photos, teams, a leaderboard, bonus challenges, and an admin console. Sign-in is Google only; a user's first sign-in creates their profile, and admins can promote/demote other users from the Admin tab. Admins can also randomly audit a participant's proof photos with AI (via a small server-side proxy — see below) and set each week's review status.
+
+The Leaderboard tab defaults to team rankings — top 3 teams on a podium (varying heights), the rest in a compact expandable list — with a toggle to switch the same layout to individual rankings. Inside "My team," members race each other for the current week (Start → Finish), each otter's position set by their own share of that week's top walker.
 
 Live sites:
 - GitHub Pages: **https://itzemm.github.io/oh-apac-steps-challenge/**
@@ -16,7 +18,7 @@ Live sites:
   - `users/{uid}` — one profile per signed-in user, keyed by their Firebase Auth uid (`name`, `email`, `country`, `provider`, `role: 'admin'|'user'`, `teamId`).
   - `teams/{teamId}` — `name`, `captainUid`, `members: [uid, ...]`.
   - `bonus/{bonusId}` — admin-authored bonus challenges and who/which team has been awarded them. In the Admin tab, each challenge's award list gets a name filter once there are more than 8 people/teams to scroll through.
-  - `steps/{uid}` — each user's daily step counts, weekly proof-photo (compressed, stored inline as a JPEG data URL), and `verified: { [weekIndex]: { verifiedBy, verifiedByName, verifiedAt } }` — set only by an admin, from the participant's detail modal.
+  - `steps/{uid}` — each user's daily step counts, weekly proof-photo (compressed, stored inline as a JPEG data URL), and `verified: { [weekIndex]: { status: 'verified'|'rejected'|'needs_review', verifiedBy, verifiedByName, verifiedAt } }` — no entry for a week means it hasn't been reviewed yet ("pending"). Set only by an admin, from the participant's detail modal.
 - `firestore.rules` — access rules (see **Security model** below).
 - `audit-proxy/` — a small standalone Node server (a separate Render **Web Service**, not part of the static site) that holds the Gemini API key and proxies the admin "check with AI" audit requests. See **AI proof-photo audits** below.
 
@@ -70,7 +72,9 @@ The only Render-side action item is step 4 above: add your Render URL to Firebas
 
 ## AI proof-photo audits (admin)
 
-In the Admin tab, "🎲 Randomly select someone to audit" opens a participant's detail view. For any week with both a proof photo and logged daily steps, an admin can click **🤖 Check with AI**: it sends that week's photo and the person's self-reported daily step counts to Gemini, asks it to read whatever step counts/dates the photo actually shows, and flags any date where the photo and the claim don't line up. After reviewing (AI-assisted or just by eye), an admin can click **Mark verified** to stamp that week — the stamp shows up next to that week everywhere it's displayed (the participant table, the detail modal).
+In the Admin tab, "🎲 Randomly select someone to audit" opens a participant's detail view. For any week with both a proof photo and logged daily steps, an admin can click **🤖 Check with AI**: it sends that week's photo and the person's self-reported daily step counts to Gemini, asks it to read whatever step counts/dates the photo actually shows, and flags any date where the photo and the claim don't line up. After reviewing (AI-assisted or just by eye), an admin sets that week's status to **Verified**, **Needs further verification**, or **Rejected** (or **Clear** to reset it back to pending) — the resulting colored pill (Excel's classic Good/Bad/Neutral cell colors, plus grey for pending) shows up next to that week everywhere it's displayed: the participant table, the detail modal, and on the participant's own "My trail" page once that week is locked.
+
+The Admin tab also has a **Proof photos** panel listing every uploaded proof photo across all participants and weeks, with an **Export all proof (ZIP)** button that bundles them all into one download (`name_weekN.jpg`).
 
 This talks to Gemini through `audit-proxy/`, a tiny separate server, **not** directly from the browser — the Gemini key must never end up in `index.html` or this git repo, since the repo is public. See **Security model** for why.
 

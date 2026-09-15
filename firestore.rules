@@ -19,10 +19,13 @@ service cloud.firestore {
         && request.auth.token.email.lower() == 'chenjiayi25@gmail.com';
     }
 
-    // Challenge-wide settings (name, start date, weeks, step limit). Admin-only writes.
+    // Challenge-wide settings (name, start date, weeks, step limit). Admin-only
+    // writes; never deletable (there's no legitimate reason to delete this doc —
+    // losing it would wipe the configured start date for everyone).
     match /config/{docId} {
       allow read: if isSignedIn();
-      allow write: if isAdmin();
+      allow create, update: if isAdmin();
+      allow delete: if false;
     }
 
     // One profile doc per signed-in user, keyed by their Firebase Auth uid.
@@ -42,11 +45,15 @@ service cloud.firestore {
     }
 
     // Teams are a shared, collaborative resource (create/join/leave/remove-member
-    // all touch the team doc). Any signed-in participant may write to keep the
-    // team-management flow client-only, without a Cloud Functions backend.
+    // all touch the team doc). Any signed-in participant may create/update to
+    // keep the team-management flow client-only, without a Cloud Functions
+    // backend. Deleting is only ever allowed once a team is already empty (the
+    // app clears `members` to [] right before deleting it when the last person
+    // leaves) — this stops anyone from deleting an active team full of people.
     match /teams/{teamId} {
       allow read: if isSignedIn();
-      allow write: if isSignedIn();
+      allow create, update: if isSignedIn();
+      allow delete: if isSignedIn() && resource.data.members.size() == 0;
     }
 
     // Bonus challenges are admin-authored and admin-awarded.
