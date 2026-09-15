@@ -30,8 +30,10 @@ There's no "first user becomes admin" bootstrap and no sign-up form — see
 ```bash
 cd scripts
 npm install
-npm run setup-admin          # creates username admin_emily, role admin
-npm run import-roster -- roster.csv   # bulk-creates a team roster
+npm run setup-admin                     # creates username admin_emily, role admin
+npm run import-roster -- roster.csv     # bulk-creates a team roster
+node add-participant.js "Team" "Name"   # adds one person to a team
+node delete-participant.js "username"   # permanently removes one person
 ```
 
 Both are safe to re-run. `setup-admin` is also how you add *more* admins

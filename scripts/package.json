@@ -8,7 +8,9 @@
   },
   "scripts": {
     "setup-admin": "node setup-admin.js",
-    "import-roster": "node import-roster.js"
+    "import-roster": "node import-roster.js",
+    "add-participant": "node add-participant.js",
+    "delete-participant": "node delete-participant.js"
   },
   "dependencies": {
     "firebase-admin": "^12.6.0"

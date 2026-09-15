@@ -71,12 +71,37 @@ gitignored) listing every username and initial password from that run.
 Distribute these to each person, then **delete the file** — it's plaintext
 passwords sitting on disk.
 
-## Why a local script instead of an "upload roster" button on the website
+## Add one participant
 
-Bulk-creating login accounts needs the Admin SDK's service account key. That
-key can never be shipped to a browser (anyone could extract it from page
-source) and ideally shouldn't sit as a permanent environment variable on a
-server either, since a compromise there would expose everything in the
-Firebase project — not just this app's data. Running it locally, only when
-you actually need to import a roster, keeps that key off any 24/7-running
-service entirely.
+For someone who joins after the initial import — no need to touch the CSV:
+
+```bash
+node add-participant.js "Trail Blazers" "Frank Yeo"
+```
+
+Adds them to that team (creating the team if it doesn't exist yet — up to
+the 5-person limit), prints their username and initial password the same
+way `import-roster.js` does. Add `--captain` to make them the team's
+captain. Safe to re-run for the same name — it won't create a duplicate.
+
+## Delete a participant
+
+```bash
+node delete-participant.js "Trail_Blazers_Frank_Yeo"
+```
+
+**Permanently** deletes their login, Firestore profile, and all their step/
+proof history, and takes them off their team (reassigning captain, or
+deleting the team if they were its last member). Asks you to type `yes` to
+confirm first, since this can't be undone; pass `--yes` to skip the prompt
+if you're scripting multiple deletes.
+
+## Why a local script instead of an "upload roster" / "add" / "delete" button on the website
+
+Creating or deleting login accounts needs the Admin SDK's service account
+key. That key can never be shipped to a browser (anyone could extract it
+from page source) and ideally shouldn't sit as a permanent environment
+variable on a server either, since a compromise there would expose
+everything in the Firebase project — not just this app's data. Running these
+locally, only when you actually need to add, remove, or bulk-import
+someone, keeps that key off any 24/7-running service entirely.

@@ -12,7 +12,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { initAdmin } from './lib/firebase-admin-init.js';
-import { toUsername, usernameToEmail, slugTeamId } from './lib/naming.js';
+import { toUsername, slugTeamId } from './lib/naming.js';
+import { ensureUser } from './lib/provisioning.js';
 
 const MAX_TEAM_SIZE = 5;
 
@@ -21,33 +22,6 @@ function parseCsv(text) {
     .split(/\r?\n/)
     .filter(line => line.trim() !== '')
     .map(line => line.split(',').map(cell => cell.trim()));
-}
-
-async function ensureUser(auth, db, { name, username, teamId, role }) {
-  const email = usernameToEmail(username);
-  let userRecord;
-  try {
-    userRecord = await auth.getUserByEmail(email);
-    console.log(`  exists:  ${username} (${userRecord.uid}) — auth account left as-is`);
-  } catch (e) {
-    if (e.code !== 'auth/user-not-found') throw e;
-    userRecord = await auth.createUser({ email, password: username, displayName: name });
-    console.log(`  created: ${username} (${userRecord.uid})`);
-  }
-
-  const userRef = db.collection('users').doc(userRecord.uid);
-  const existing = await userRef.get();
-  if (!existing.exists) {
-    await userRef.set({
-      name, email, country: '', provider: 'password', role,
-      joinedAt: new Date().toISOString(), teamId, mustChangePassword: true
-    });
-    console.log(`    -> created Firestore profile, assigned to team`);
-  } else if (existing.data().teamId !== teamId) {
-    await userRef.update({ teamId });
-    console.log(`    -> profile existed, updated team assignment`);
-  }
-  return userRecord.uid;
 }
 
 async function main() {
