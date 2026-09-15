@@ -279,11 +279,13 @@ function usernameToEmail(username){
   return username.trim().toLowerCase().replace(/\s+/g, '_') + USERNAME_EMAIL_DOMAIN;
 }
 
-// Small server-side proxy that holds the Gemini API key (see /audit-proxy in
-// this repo). The browser never sees the key — it sends the proof photo and
-// claimed steps here, the proxy calls Gemini, and returns the parsed result.
-// The proxy verifies the caller's Firebase ID token before doing anything.
-const AUDIT_PROXY_URL = 'https://oh-apac-steps-audit.onrender.com/api/audit';
+// Small server-side proxy (see /audit-proxy in this repo) that holds two
+// secrets the browser must never see: the Gemini API key, and the Firebase
+// Admin SDK service account used for participant management. The proxy
+// verifies the caller's Firebase ID token before doing anything, and the
+// /api/admin/* routes additionally require role:'admin' in Firestore.
+const PROXY_BASE_URL = 'https://oh-apac-steps-audit.onrender.com';
+const AUDIT_PROXY_URL = PROXY_BASE_URL + '/api/audit';
 
 // A reviewed week's status: 'verified' | 'rejected' | 'needs_review', or no
 // entry at all for "pending" (not reviewed yet). Colors follow Excel's
@@ -448,7 +450,11 @@ const App = {
     teamFunFactsFor: null,
     auditResults: {},
     trailExpandedWeeks: {},
-    bonusForm: { title:'', description:'', points:'', type:'individual' }
+    bonusForm: { title:'', description:'', points:'', type:'individual' },
+    participantForm: { teamName:'', personName:'', captain:false },
+    participantActionMsg: null,
+    rosterImportBusy: false,
+    rosterImportResult: null
   },
 
   init(){
@@ -1000,6 +1006,80 @@ const App = {
     await this.saveConfig();
     this.render();
   },
+  // ---------- Participant management (admin) ----------
+  // These call /api/admin/* on the proxy server, which holds the Firebase
+  // Admin SDK service account — the only place account creation/deletion can
+  // happen, gated to callers whose Firestore profile has role:'admin'.
+  async callProxyAdmin(path, body){
+    const idToken = await auth.currentUser.getIdToken();
+    const res = await fetch(PROXY_BASE_URL + path, {
+      method:'POST',
+      headers: { 'Content-Type':'application/json', 'Authorization':'Bearer ' + idToken },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.error || 'Request failed.');
+    return data;
+  },
+  async addParticipant(teamName, personName, captain){
+    teamName = teamName.trim();
+    personName = personName.trim();
+    if(!teamName || !personName){ alert('Enter both a team name and a person name.'); return; }
+    this.state.participantActionMsg = null;
+    try{
+      const result = await this.callProxyAdmin('/api/admin/add-participant', { teamName, personName, captain });
+      this.state.participantActionMsg = { type:'success', text: result.password
+        ? `${result.message} Username: ${result.username} — initial password: ${result.password}`
+        : `${result.message} (account already existed — password left unchanged)` };
+      this.state.participantForm = { teamName:'', personName:'', captain:false };
+      await this.loadUsers();
+      await this.loadTeams();
+    }catch(e){
+      this.state.participantActionMsg = { type:'error', text: e.message || 'Could not add participant.' };
+    }
+    this.render();
+  },
+  async deleteParticipant(uid){
+    const u = this.state.users[uid];
+    if(!u) return;
+    if(!confirm(`Permanently delete ${u.name}? This removes their login, profile, and all step/proof history. This cannot be undone.`)) return;
+    const username = (u.email || '').split('@')[0];
+    if(!username){ alert("Could not determine this account's username."); return; }
+    try{
+      const result = await this.callProxyAdmin('/api/admin/delete-participant', { username });
+      delete this.state.users[uid];
+      delete this.state.allSteps[uid];
+      this.state.participantActionMsg = { type:'success', text: result.message };
+      await this.loadTeams();
+    }catch(e){
+      alert(e.message || 'Could not delete participant.');
+    }
+    this.render();
+  },
+  async importRosterCsv(file){
+    if(!file) return;
+    this.state.rosterImportBusy = true;
+    this.state.rosterImportResult = null;
+    this.render();
+    try{
+      const csvText = await file.text();
+      const result = await this.callProxyAdmin('/api/admin/import-roster', { csvText });
+      this.state.rosterImportResult = result;
+      await this.loadUsers();
+      await this.loadTeams();
+    }catch(e){
+      this.state.rosterImportResult = { error: e.message || 'Import failed.' };
+    }
+    this.state.rosterImportBusy = false;
+    this.render();
+  },
+  downloadRosterCredentials(){
+    const r = this.state.rosterImportResult;
+    if(!r || !r.credentials || !r.credentials.length) return;
+    const rows = [['Team','Name','Username','Initial Password']].concat(r.credentials.map(c=>[c.team,c.name,c.username,c.password]));
+    this.downloadCSV('generated-credentials.csv', rows);
+  },
+
   async resetChallenge(){
     if(!confirm("This clears everyone's steps and proof, and the start date. This cannot be undone. Continue?")) return;
     const snap = await getDocs(collection(db,'steps'));
@@ -1538,6 +1618,7 @@ const App = {
     `;
 
     html += this.renderAdminBonus();
+    html += this.renderAdminParticipantTools();
 
     if(!this.state.allStepsLoaded){
       html += `<div class="panel"><div class="loading">Loading participant status…</div></div>`;
@@ -1582,6 +1663,7 @@ const App = {
         html += `<td style="white-space:nowrap;">
           <button class="btn btn-sm" data-role="view-user" data-uid="${u.uid}">View</button>
           <button class="btn btn-sm" data-role="toggle-role" data-uid="${u.uid}" data-newrole="${u.role==='admin'?'user':'admin'}">${u.role==='admin'?'Demote':'Promote'}</button>
+          <button class="btn btn-sm btn-danger" data-role="delete-participant" data-uid="${u.uid}">Delete</button>
         </td>`;
         html += `</tr>`;
       });
@@ -1625,6 +1707,41 @@ const App = {
       </div>`;
     });
     html += `</div></div>`;
+    return html;
+  },
+
+  renderAdminParticipantTools(){
+    const f = this.state.participantForm;
+    const msg = this.state.participantActionMsg;
+    let html = `<div class="panel">
+      <h3>Add a participant</h3>
+      ${msg ? `<div class="notice" style="${msg.type==='error' ? 'background:var(--rust-tint);color:var(--rust);' : ''}">${msg.text}</div>` : ''}
+      <div class="form-inline">
+        <div class="field" style="margin-bottom:0;flex:1;min-width:160px;"><label>Team name</label><input type="text" id="in-part-team" value="${f.teamName}" placeholder="Trail Blazers"></div>
+        <div class="field" style="margin-bottom:0;flex:1;min-width:160px;"><label>Person name</label><input type="text" id="in-part-name" value="${f.personName}" placeholder="Frank Yeo"></div>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink-soft);margin-bottom:8px;"><input type="checkbox" id="in-part-captain" ${f.captain?'checked':''}> Make captain</label>
+        <button class="btn btn-primary" id="btn-add-participant">Add</button>
+      </div>
+      <div style="font-size:12px;color:var(--ink-soft);margin-top:8px;">Creates a new team if it doesn't exist yet (up to 5 people per team). Their username and initial password are shown here once added — the app forces them to change it on first sign-in.</div>
+    </div>`;
+
+    html += `<div class="panel">
+      <h3>Bulk import a roster</h3>
+      <div style="font-size:12px;color:var(--ink-soft);margin-bottom:10px;">CSV columns: <code>Team Name, Captain, Member 1, Member 2, Member 3, Member 4</code> (leave later member columns blank for smaller teams). <a href="scripts/roster.example.csv" target="_blank" rel="noopener">See an example</a>.</div>
+      <input type="file" accept=".csv,text/csv" id="in-roster-file" ${this.state.rosterImportBusy ? 'disabled' : ''}>
+      ${this.state.rosterImportBusy ? `<div class="loading">Importing…</div>` : ''}
+    `;
+    const result = this.state.rosterImportResult;
+    if(result && result.error){
+      html += `<div class="notice" style="background:var(--rust-tint);color:var(--rust);margin-top:10px;">${result.error}</div>`;
+    } else if(result){
+      html += `<div style="margin-top:10px;font-size:13px;">
+        <div>${result.credentials.length} account(s) created/updated.${result.skipped.length ? ` ${result.skipped.length} row(s) skipped.` : ''}</div>
+        ${result.skipped.length ? `<ul style="margin:6px 0;padding-left:18px;color:var(--rust);font-size:12px;">${result.skipped.map(s=>`<li>${s}</li>`).join('')}</ul>` : ''}
+        ${result.credentials.length ? `<button class="btn btn-sm" id="btn-download-roster-creds" style="margin-top:6px;">Download usernames &amp; passwords (CSV)</button>` : ''}
+      </div>`;
+    }
+    html += `</div>`;
     return html;
   },
 
@@ -1792,6 +1909,23 @@ const App = {
     if(randomAuditBtn) randomAuditBtn.addEventListener('click', () => this.pickRandomAudit());
     const exportProofBtn = document.getElementById('btn-export-proof');
     if(exportProofBtn) exportProofBtn.addEventListener('click', () => this.exportProofZip());
+
+    const addParticipantBtn = document.getElementById('btn-add-participant');
+    if(addParticipantBtn){
+      addParticipantBtn.addEventListener('click', () => {
+        this.state.participantForm = {
+          teamName: document.getElementById('in-part-team').value,
+          personName: document.getElementById('in-part-name').value,
+          captain: document.getElementById('in-part-captain').checked
+        };
+        this.addParticipant(this.state.participantForm.teamName, this.state.participantForm.personName, this.state.participantForm.captain);
+      });
+    }
+    const rosterFileInput = document.getElementById('in-roster-file');
+    if(rosterFileInput) rosterFileInput.addEventListener('change', () => this.importRosterCsv(rosterFileInput.files[0]));
+    const downloadCredsBtn = document.getElementById('btn-download-roster-creds');
+    if(downloadCredsBtn) downloadCredsBtn.addEventListener('click', () => this.downloadRosterCredentials());
+    root.querySelectorAll('[data-role="delete-participant"]').forEach(el => el.addEventListener('click', () => this.deleteParticipant(el.dataset.uid)));
 
     root.querySelectorAll('[data-role="toggle-role"]').forEach(el => el.addEventListener('click', () => this.setRole(el.dataset.uid, el.dataset.newrole)));
     root.querySelectorAll('[data-role="view-user"]').forEach(el => el.addEventListener('click', () => this.openModal({ type:'userDetail', uid: el.dataset.uid })));

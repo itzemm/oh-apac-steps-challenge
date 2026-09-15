@@ -20,26 +20,33 @@ Live sites:
   - `bonus/{bonusId}` — admin-authored bonus challenges and who/which team has been awarded them. In the Admin tab, each challenge's award list gets a name filter once there are more than 8 people/teams to scroll through.
   - `steps/{uid}` — each user's daily step counts, weekly proof-photo (compressed, stored inline as a JPEG data URL), and `verified: { [weekIndex]: { status: 'verified'|'rejected'|'needs_review', verifiedBy, verifiedByName, verifiedAt } }` — no entry for a week means it hasn't been reviewed yet ("pending"). Set only by an admin, from the participant's detail modal.
 - `firestore.rules` — access rules (see **Security model** below).
-- `audit-proxy/` — a small standalone Node server (a separate Render **Web Service**, not part of the static site) that holds the Gemini API key and proxies the admin "check with AI" audit requests. See **AI proof-photo audits** below.
+- `audit-proxy/` — a small standalone Node server (a separate Render **Web Service**, not part of the static site) that holds two secrets: the Gemini API key (admin "check with AI" audits) and the Firebase Admin SDK service account (admin add/delete/bulk-import participants, from the Admin tab). See **AI proof-photo audits** and **Provisioning accounts** below.
 
 ## Provisioning accounts (admin bootstrap + rosters)
 
-There's no "first user becomes admin" bootstrap and no sign-up form — see
-**`scripts/README.md`** for the full walkthrough, but in short:
+There's no self-service sign-up. Two ways to create accounts:
+
+**From the Admin tab (day-to-day use)** — once you're signed in as an admin, the Admin tab has:
+- **Add a participant** — team name + person name (+ optional "make captain") → creates their account and shows you the username/initial password once.
+- **Bulk import a roster** — upload a CSV (`Team Name, Captain, Member 1-4` columns; see `scripts/roster.example.csv`) → creates everyone at once and gives you a CSV of usernames/initial passwords to download.
+- **Delete** button on each row in the Participants table — permanently removes that person's login, profile, and step/proof history, and takes them off their team.
+
+These call `audit-proxy`'s `/api/admin/*` routes, gated to callers whose Firestore profile has `role: 'admin'` — see **Security model**.
+
+**From your own machine (the one thing that has to start here)** — creating your *first* admin account is a chicken-and-egg problem (the in-app tools above need you to already be signed in as an admin), so that one step still runs locally:
 
 ```bash
 cd scripts
 npm install
-npm run setup-admin                     # creates username admin_emily, role admin
-npm run import-roster -- roster.csv     # bulk-creates a team roster
-node add-participant.js "Team" "Name"   # adds one person to a team
-node delete-participant.js "username"   # permanently removes one person
+npm run setup-admin   # creates username admin_emily, role admin
 ```
 
-Both are safe to re-run. `setup-admin` is also how you add *more* admins
-later — "the admin group" is just everyone it's been run for, not a separate
-Firestore concept. Every created account's initial password is the same
-string as its username; the app forces a password change on first sign-in.
+Full details, including the CLI equivalents of add/delete/import (useful as
+a fallback, or for scripting), are in **`scripts/README.md`**. Every created
+account's initial password is the same string as its username; the app
+forces a password change on first sign-in. `setup-admin` is also how you add
+*more* admins later — "the admin group" is just everyone it's been run for,
+not a separate Firestore concept.
 
 ## One-time setup still needed
 
@@ -92,13 +99,17 @@ This talks to Gemini through `audit-proxy/`, a tiny separate server, **not** dir
 ### Deploying the audit proxy
 
 1. In the Render dashboard: **New → Blueprint → select this repo.** `render.yaml` now defines *two* services — the static site, and `oh-apac-steps-audit` (a Node Web Service, rooted at `audit-proxy/`). Render creates both.
-2. Open the **oh-apac-steps-audit** service → **Environment** → add `GEMINI_API_KEY` with your Gemini key as the value. This is the one place the key should ever be typed in — not in any file, not in chat, not in a commit.
-3. Once it deploys, note the URL Render gives that service (it should be `https://oh-apac-steps-audit.onrender.com`, matching what's already set in `index.html` as `AUDIT_PROXY_URL` — but Render appends a random suffix instead if that exact name was taken. If your URL differs, update the `AUDIT_PROXY_URL` constant near the top of `index.html`'s script and redeploy the static site).
+2. Open the **oh-apac-steps-audit** service → **Environment** → add:
+   - `GEMINI_API_KEY` — your Gemini key.
+   - `FIREBASE_SERVICE_ACCOUNT_KEY` — the *entire contents* of the service-account JSON file (Firebase Console → ⚙️ Project Settings → Service Accounts → Generate new private key), pasted as one value. This powers the Admin tab's add/delete/bulk-import participant tools — see **Provisioning accounts** above.
+
+   These are the only places either secret should ever be typed in — not in any file, not in chat, not in a commit.
+3. Once it deploys, note the URL Render gives that service (it should be `https://oh-apac-steps-audit.onrender.com`, matching what's already set in `index.html` as `PROXY_BASE_URL` — but Render appends a random suffix instead if that exact name was taken. If your URL differs, update the `PROXY_BASE_URL` constant near the top of `index.html`'s script and redeploy the static site).
 4. Double check the `ALLOWED_ORIGINS` env var on that service (pre-filled by `render.yaml`) lists every domain the static site is actually served from — it's a CORS allowlist, so the proxy will otherwise silently refuse requests from a domain you forgot to add.
 
-**About the key you shared in this chat:** treat any key pasted directly into a conversation as already semi-exposed — I'd recommend generating a fresh key in Google AI Studio and using that one for `GEMINI_API_KEY` instead of reusing the one from this conversation.
+**About the Gemini key you shared in this chat:** treat any key pasted directly into a conversation as already semi-exposed — I'd recommend generating a fresh key in Google AI Studio and using that one for `GEMINI_API_KEY` instead of reusing the one from this conversation. (The service account key was never shared in chat — it was downloaded and placed locally, and stays that way.)
 
-The proxy doesn't just trust anyone who finds its URL: every request must carry the caller's Firebase Auth ID token, which the proxy verifies against Google's public signing keys before doing anything (no service-account secret needed for that check) — see `audit-proxy/server.js`. That confirms the caller is a real signed-in member of this app, the same bar `firestore.rules` uses for the `teams` collection.
+`/api/audit` (used by "check with AI") only requires that the caller present a valid Firebase Auth ID token, verified against Google's public signing keys — no service-account secret needed for that check. `/api/admin/*` (add/delete/import participants) requires that *and* a live Firestore lookup confirming `role: 'admin'` for the caller, using the Admin SDK the service now holds — see `audit-proxy/server.js`.
 
 ## Local development
 
@@ -108,9 +119,10 @@ No build step — just open `index.html` in a browser, or serve the folder local
 
 This is an internal team-activity tool, not a system handling sensitive personal or financial data, so the rules favor "simple and client-only" over building a Cloud Functions backend:
 
-- **Accounts and profiles can only ever be created by `/scripts`**, run locally with the Admin SDK, which bypasses `firestore.rules` entirely — client-side `create` on `users` and `teams` is hard-disabled (`allow create: if false;`), so there's no path to a self-registered account even by calling Firestore directly.
+- **Accounts and profiles can only ever be created or deleted via the Admin SDK** — either through `/scripts` run locally, or through `audit-proxy`'s `/api/admin/*` routes, both of which bypass `firestore.rules` entirely. Client-side `create` on `users` and `teams` is hard-disabled (`allow create: if false;`), so there's no path to a self-registered account even by calling Firestore directly.
+- **The `/api/admin/*` routes are the one place a persistent secret can do real damage** if the proxy is ever compromised: `FIREBASE_SERVICE_ACCOUNT_KEY` grants full read/write/delete over the *entire* Firebase project, not just this app's data. They're gated behind two checks — a valid Firebase Auth ID token, and a live Firestore lookup confirming that token's `uid` has `role: 'admin'` — so only an actual admin account (not just any signed-in participant) can reach them. This is a deliberate tradeoff: the alternative (`/scripts`, run locally) keeps that key off any 24/7 service entirely, at the cost of needing terminal access for every change. `scripts/` is kept as a fallback either way.
 - **Roles** can only be changed by an existing admin — enforced in `firestore.rules`, not just the UI.
 - **Bonus challenges and challenge config** (start date, step limits) are admin-write-only.
 - **Steps** (`days`, `weekProof`) can be written by their own owner or an admin (admin access is used by the "reset challenge" feature). The `verified` audit stamp is the one exception carved out of "owner can write their own doc": only an admin can ever set it, enforced in `firestore.rules` — a participant can't self-verify even by calling Firestore directly, bypassing the UI entirely.
 - **Teams are updatable** (not creatable) by any signed-in participant once they exist, since leaving/removing a teammate mutate the shared team document and there's no backend to arbitrate that. The practical risk is a participant mischievously editing another team's roster — annoying, not sensitive, and easy for an admin to fix.
-- **The Gemini key lives only on the audit-proxy server**, set as a real environment variable, never in the static site's source. The proxy itself checks that every caller presents a valid Firebase Auth ID token before it will spend a Gemini call on their behalf.
+- **The Gemini key** lives only on the audit-proxy server, set as a real environment variable, never in the static site's source. `/api/audit` only requires a valid Firebase Auth ID token (any signed-in participant), not admin — the AI-audit feature itself is admin-only in the UI, but the endpoint's blast radius if misused is "burn some Gemini quota," not "touch the database."

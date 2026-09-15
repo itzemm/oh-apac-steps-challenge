@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Holds the Gemini API key server-side and proxies AI proof-photo audit requests from the OH APAC Steps Challenge static site.",
+  "description": "Holds the Gemini API key and the Firebase Admin SDK service account server-side, proxying AI proof-photo audits and admin participant-management requests from the OH APAC Steps Challenge static site.",
   "engines": {
     "node": ">=18"
   },
@@ -13,6 +13,7 @@
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.19.2",
+    "firebase-admin": "^12.6.0",
     "jose": "^5.9.6"
   }
 }
