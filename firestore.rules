@@ -13,11 +13,6 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
-    function isOwnerEmail() {
-      return isSignedIn()
-        && request.auth.token.email != null
-        && request.auth.token.email.lower() == 'chenjiayi25@gmail.com';
-    }
 
     // Challenge-wide settings (name, start date, weeks, step limit). Admin-only
     // writes; never deletable (there's no legitimate reason to delete this doc —
@@ -28,15 +23,17 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // One profile doc per signed-in user, keyed by their Firebase Auth uid.
+    // One profile doc per user, keyed by their Firebase Auth uid. There is no
+    // self-service sign-up: every account (and its profile) is provisioned
+    // ahead of time by an admin running /scripts locally with the Firebase
+    // Admin SDK, which bypasses these rules entirely — so client-side create
+    // is simply never allowed.
     match /users/{uid} {
       allow read: if isSignedIn();
-      // A user may only create their own profile, and may only grant themselves
-      // the admin role if they are the designated owner account.
-      allow create: if isSelf(uid)
-        && request.resource.data.role == (isOwnerEmail() ? 'admin' : 'user');
-      // Users may update their own profile (name/country/teamId) but never their
-      // own role. Admins may change ONLY the role field on any profile.
+      allow create: if false;
+      // Users may update their own profile (name/country/mustChangePassword)
+      // but never their own role. Admins may change ONLY the role field on
+      // any profile.
       allow update: if isSignedIn() && (
         (isSelf(uid) && request.resource.data.role == resource.data.role)
         || (isAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role']))
@@ -44,15 +41,17 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // Teams are a shared, collaborative resource (create/join/leave/remove-member
-    // all touch the team doc). Any signed-in participant may create/update to
-    // keep the team-management flow client-only, without a Cloud Functions
-    // backend. Deleting is only ever allowed once a team is already empty (the
-    // app clears `members` to [] right before deleting it when the last person
-    // leaves) — this stops anyone from deleting an active team full of people.
+    // Teams are provisioned the same way as users (see above) — client-side
+    // create is never allowed. Once created, any signed-in participant may
+    // update a team (leave/remove-member touch the team doc) without a Cloud
+    // Functions backend. Deleting is only ever allowed once a team is already
+    // empty (the app clears `members` to [] right before deleting it when the
+    // last person leaves) — this stops anyone from deleting an active team
+    // full of people.
     match /teams/{teamId} {
       allow read: if isSignedIn();
-      allow create, update: if isSignedIn();
+      allow create: if false;
+      allow update: if isSignedIn();
       allow delete: if isSignedIn() && resource.data.members.size() == 0;
     }
 

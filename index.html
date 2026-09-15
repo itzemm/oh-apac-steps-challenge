@@ -49,10 +49,6 @@ img{max-width:100%;}
 .field input,.field select{width:100%;padding:10px 12px;border:1px solid var(--line-strong);border-radius:6px;font-size:15px;font-family:inherit;background:#fff;color:var(--ink);}
 .field input:focus,.field select:focus{outline:2px solid var(--forest);outline-offset:1px;}
 .privacy-note{font-size:12px;color:var(--ink-soft);margin-top:16px;line-height:1.5;}
-.provider-btn{display:flex;align-items:center;gap:10px;width:100%;padding:12px 16px;border-radius:6px;border:1px solid var(--line-strong);background:#fff;font-size:14px;font-family:inherit;cursor:pointer;margin-bottom:10px;color:var(--ink);}
-.provider-btn:hover{border-color:var(--forest);}
-.provider-btn:disabled{opacity:0.5;cursor:not-allowed;}
-.provider-icon{width:18px;height:18px;flex-shrink:0;}
 .back-link{background:none;border:none;color:var(--forest);text-decoration:underline;cursor:pointer;font-size:13px;padding:0;font-family:inherit;margin-bottom:14px;display:inline-block;}
 
 /* ---------- Buttons ---------- */
@@ -81,7 +77,7 @@ img{max-width:100%;}
 .subtab.active{background:var(--forest);border-color:var(--forest);color:#fff;}
 
 /* ---------- Trail checkpoint graphic ---------- */
-.trail{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin-bottom:20px;}
+.trail{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:40px 20px 18px;margin-bottom:20px;}
 .trail-track{display:flex;align-items:center;}
 .trail-dot-wrap{display:flex;flex-direction:column;align-items:center;flex:1;position:relative;}
 .trail-line-row{display:flex;align-items:center;width:100%;}
@@ -254,7 +250,7 @@ table.roster td{padding:9px 8px;border-bottom:1px solid var(--line);vertical-ali
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
 import {
-  getAuth, GoogleAuthProvider, signInWithPopup,
+  getAuth, signInWithEmailAndPassword, updatePassword,
   onAuthStateChanged, signOut
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
 import {
@@ -273,11 +269,15 @@ const firebaseConfig = {
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
 const db = getFirestore(fbApp);
-const googleProvider = new GoogleAuthProvider();
 
-// The account that always becomes admin the first time it creates a profile.
-// Additional admins can then be promoted from the Admin tab.
-const OWNER_ADMIN_EMAIL = 'chenjiayi25@gmail.com';
+// Accounts are provisioned entirely by the admin (see /scripts) — there is no
+// self-service sign-up. A "username" like trail-blazers_alice-tan is really
+// just the local part of a synthetic Firebase Auth email; this suffix turns
+// it into one consistently, both here and in scripts/lib/naming.js.
+const USERNAME_EMAIL_DOMAIN = '@ohapac.local';
+function usernameToEmail(username){
+  return username.trim().toLowerCase().replace(/\s+/g, '_') + USERNAME_EMAIL_DOMAIN;
+}
 
 // Small server-side proxy that holds the Gemini API key (see /audit-proxy in
 // this repo). The browser never sees the key — it sends the proof photo and
@@ -424,8 +424,8 @@ const App = {
   state: {
     authUser: null,
     identity: null,
-    pendingUser: null,
-    loginStep: 'provider',
+    notRegistered: false,
+    mustChangePassword: false,
     signingIn: false,
     config: null,
     users: {},
@@ -461,8 +461,8 @@ const App = {
     if(!user){
       this.state.identity = null;
       this.state.mySteps = null;
-      this.state.pendingUser = null;
-      this.state.loginStep = 'provider';
+      this.state.notRegistered = false;
+      this.state.mustChangePassword = false;
       this.state.booting = false;
       this.render();
       return;
@@ -476,10 +476,13 @@ const App = {
     const profile = this.state.users[user.uid];
     if(profile){
       this.state.identity = { uid: user.uid, name: profile.name, email: profile.email };
+      this.state.mustChangePassword = !!profile.mustChangePassword;
       await this.enterApp();
     } else {
-      this.state.pendingUser = user;
-      this.state.loginStep = 'profile';
+      // Signed in with valid credentials, but no admin-provisioned profile
+      // exists — there's no self-service signup, so this account just isn't
+      // set up yet (or was deleted from Firestore separately from Auth).
+      this.state.notRegistered = true;
     }
     this.state.booting = false;
     this.render();
@@ -544,55 +547,49 @@ const App = {
   },
 
   // ---------- Login flow ----------
+  // Accounts (username, password, profile, team) are all provisioned ahead of
+  // time by the admin — see /scripts. There is no self-service sign-up here.
   friendlyAuthError(e){
     const code = e && e.code ? e.code : '';
-    if(code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') return null;
-    if(code === 'auth/account-exists-with-different-credential') return 'That email is already linked to a different sign-in method.';
-    if(code === 'auth/operation-not-allowed') return 'This sign-in method isn’t enabled yet. Ask an admin to enable it in Firebase.';
-    if(code === 'auth/unauthorized-domain') return 'This website’s domain isn’t authorized for sign-in yet. Ask an admin to add it in Firebase.';
+    if(code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found') return 'Incorrect username or password.';
+    if(code === 'auth/too-many-requests') return 'Too many attempts — wait a moment and try again.';
+    if(code === 'auth/operation-not-allowed') return 'Sign-in isn’t enabled yet. Ask an admin to enable Email/Password in Firebase.';
     return 'Sign-in failed. Please try again.';
   },
-  async signInWithGoogle(){
+  async signInWithUsername(username, password){
+    username = (username || '').trim();
+    if(!username || !password){ this.state.error = 'Enter your username and password.'; this.render(); return; }
     this.state.error = null;
     this.state.signingIn = true;
     this.render();
     try{
-      await signInWithPopup(auth, googleProvider);
+      await signInWithEmailAndPassword(auth, usernameToEmail(username), password);
     }catch(e){
       this.state.error = this.friendlyAuthError(e);
       this.state.signingIn = false;
       this.render();
     }
   },
-  async submitProfile(firstName, lastName, country){
-    firstName = firstName.trim();
-    lastName = lastName.trim();
-    country = country.trim();
-    if(!firstName || !lastName){ this.state.error = 'Enter both your first and last name.'; this.render(); return; }
+  async changePassword(newPassword, confirmPassword){
+    if(!newPassword || newPassword.length < 8){ this.state.error = 'Use at least 8 characters.'; this.render(); return; }
+    if(newPassword !== confirmPassword){ this.state.error = 'Passwords don’t match.'; this.render(); return; }
     this.state.error = null;
-    const name = `${firstName} ${lastName}`;
-    const user = this.state.pendingUser;
-    const email = (user.email || '').toLowerCase();
-    const isOwner = email === OWNER_ADMIN_EMAIL;
-    const profile = {
-      name, firstName, lastName, email, country,
-      provider: 'google',
-      role: isOwner ? 'admin' : 'user',
-      joinedAt: new Date().toISOString(),
-      teamId: null
-    };
-    await setDoc(doc(db,'users',user.uid), profile);
-    this.state.users[user.uid] = { uid:user.uid, ...profile };
-    this.state.identity = { uid:user.uid, name, email };
-    this.state.pendingUser = null;
-    await this.enterApp();
-    this.render();
+    try{
+      await updatePassword(auth.currentUser, newPassword);
+      await updateDoc(doc(db,'users',this.state.identity.uid), { mustChangePassword:false });
+      this.state.mustChangePassword = false;
+      this.render();
+    }catch(e){
+      this.state.error = e.code === 'auth/requires-recent-login'
+        ? 'For security, sign out and sign in again before changing your password.'
+        : 'Could not update your password. Please try again.';
+      this.render();
+    }
   },
 
   async enterApp(){
     await this.loadMySteps();
     this.state.view = 'trail';
-    this.state.loginStep = 'provider';
   },
 
   async switchIdentity(){
@@ -757,32 +754,6 @@ const App = {
   },
   slugify(name){
     return name.toLowerCase().trim().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'') || 'team';
-  },
-  async createTeam(name){
-    name = name.trim();
-    if(!name){ alert('Give your team a name.'); return; }
-    const uid = this.state.identity.uid;
-    if(this.state.users[uid].teamId){ alert('Leave your current team first.'); return; }
-    const teamRef = doc(collection(db,'teams'));
-    const team = { id: teamRef.id, name, captainUid: uid, members:[uid], createdAt: new Date().toISOString() };
-    await setDoc(teamRef, team);
-    await updateDoc(doc(db,'users',uid), { teamId: teamRef.id });
-    this.state.teams[teamRef.id] = team;
-    this.state.users[uid].teamId = teamRef.id;
-    this.render();
-  },
-  async joinTeam(teamId){
-    const uid = this.state.identity.uid;
-    if(this.state.users[uid].teamId){ alert('Leave your current team first.'); return; }
-    const team = this.state.teams[teamId];
-    if(!team) return;
-    if(team.members.length >= TEAM_SIZE_LIMIT){ alert('That team is already full.'); return; }
-    const members = [...team.members, uid];
-    await updateDoc(doc(db,'teams',teamId), { members });
-    await updateDoc(doc(db,'users',uid), { teamId });
-    team.members = members;
-    this.state.users[uid].teamId = teamId;
-    this.render();
   },
   async leaveTeam(){
     const uid = this.state.identity.uid;
@@ -1112,26 +1083,18 @@ const App = {
     const root = document.getElementById('app');
     if(this.state.booting){ root.innerHTML = '<div class="loading">Loading the trail…</div>'; return; }
     if(!this.state.identity){ root.innerHTML = this.renderLogin(); this.bindLogin(); return; }
+    if(this.state.mustChangePassword){ root.innerHTML = this.renderChangePassword(); this.bindChangePassword(); return; }
     root.innerHTML = this.renderAppShell();
     this.bindApp();
   },
 
   renderLogin(){
-    if(this.state.loginStep === 'profile'){
-      const user = this.state.pendingUser;
-      const displayParts = (user && user.displayName ? user.displayName : '').trim().split(/\s+/);
-      const suggestedFirst = displayParts.length && displayParts[0] !== '' ? displayParts[0] : '';
-      const suggestedLast = displayParts.length > 1 ? displayParts.slice(1).join(' ') : '';
+    if(this.state.notRegistered){
       return `
         <div class="login-wrap"><div class="login-card">
-          <button class="back-link" id="btn-back-provider">&larr; Use a different account</button>
-          <div class="login-hero">Create your profile</div>
-          <div class="login-sub">Signed in as ${user ? user.email : ''} — tell us a bit about you.</div>
-          ${this.state.error ? `<div class="notice">${this.state.error}</div>` : ''}
-          <div class="field"><label for="in-firstname">First name</label><input id="in-firstname" type="text" value="${suggestedFirst}" placeholder="Emily"></div>
-          <div class="field"><label for="in-lastname">Last name</label><input id="in-lastname" type="text" value="${suggestedLast}" placeholder="Tan"></div>
-          <div class="field"><label for="in-country">Country / office</label><input id="in-country" type="text" placeholder="Singapore"></div>
-          <button class="btn btn-primary btn-block" id="btn-submit-profile">Enter the trail</button>
+          <div class="login-hero">Account not set up</div>
+          <div class="login-sub">You signed in successfully, but there's no participant profile for this account yet. Ask your admin to add you to the challenge.</div>
+          <button class="btn btn-block" id="btn-sign-out">Sign out</button>
         </div></div>
       `;
     }
@@ -1139,30 +1102,51 @@ const App = {
       <div class="login-wrap"><div class="login-card">
         <img class="login-hero-otter" src="assets/otters/otter-duo.png" alt="">
         <div class="login-hero">OH APAC Steps Challenge</div>
-        <div class="login-sub">A team steps challenge, wherever you're logging in from.</div>
+        <div class="login-sub">Sign in with the username and password your admin gave you.</div>
         ${this.state.error ? `<div class="notice">${this.state.error}</div>` : ''}
-        <button class="provider-btn" id="btn-google" ${this.state.signingIn ? 'disabled' : ''}>
-          <svg class="provider-icon" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3c-1.6 4.6-6 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.5 6 29.5 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.2-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.6 15.9 18.9 13 24 13c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.5 7 29.5 5 24 5c-7.5 0-14 4.2-17.7 10.4z"/><path fill="#4CAF50" d="M24 44c5.4 0 10.3-1.9 14-5.1l-6.5-5.4C29.4 35.3 26.8 36 24 36c-5.3 0-9.7-3.4-11.3-8.1l-6.6 5C9.9 39.6 16.4 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.1-4.1 5.5l6.5 5.4C41.5 35.8 44 30.3 44 24c0-1.2-.1-2.4-.4-3.5z"/></svg>
-          Continue with Google
-        </button>
-        <div class="privacy-note">Sign in with your Google work account. Your name, steps, proof, and team are visible to the rest of the team taking part.</div>
+        <div class="field"><label for="in-username">Username</label><input id="in-username" type="text" autocomplete="username" placeholder="trail-blazers_alice-tan"></div>
+        <div class="field"><label for="in-password">Password</label><input id="in-password" type="password" autocomplete="current-password"></div>
+        <button class="btn btn-primary btn-block" id="btn-sign-in" ${this.state.signingIn ? 'disabled' : ''}>${this.state.signingIn ? 'Signing in…' : 'Sign in'}</button>
+        <div class="privacy-note">Accounts are set up by your admin — there's no sign-up here. Your name, steps, proof, and team are visible to the rest of the team taking part.</div>
       </div></div>
     `;
   },
 
   bindLogin(){
-    const g = document.getElementById('btn-google');
-    if(g) g.addEventListener('click', () => this.signInWithGoogle());
-    const back = document.getElementById('btn-back-provider');
-    if(back) back.addEventListener('click', () => this.switchIdentity());
-    const submitProfile = document.getElementById('btn-submit-profile');
-    if(submitProfile){
-      submitProfile.addEventListener('click', () => this.submitProfile(
-        document.getElementById('in-firstname').value,
-        document.getElementById('in-lastname').value,
-        document.getElementById('in-country').value
-      ));
+    const signOutBtn = document.getElementById('btn-sign-out');
+    if(signOutBtn) signOutBtn.addEventListener('click', () => this.switchIdentity());
+    const signInBtn = document.getElementById('btn-sign-in');
+    if(signInBtn){
+      const submit = () => this.signInWithUsername(
+        document.getElementById('in-username').value,
+        document.getElementById('in-password').value
+      );
+      signInBtn.addEventListener('click', submit);
+      document.getElementById('in-password').addEventListener('keydown', e => { if(e.key==='Enter') submit(); });
     }
+  },
+
+  renderChangePassword(){
+    return `
+      <div class="login-wrap"><div class="login-card">
+        <div class="login-hero">Set a new password</div>
+        <div class="login-sub">You're signed in with a temporary password. Choose a new one before continuing — at least 8 characters.</div>
+        ${this.state.error ? `<div class="notice">${this.state.error}</div>` : ''}
+        <div class="field"><label for="in-newpass">New password</label><input id="in-newpass" type="password" autocomplete="new-password"></div>
+        <div class="field"><label for="in-newpass2">Confirm new password</label><input id="in-newpass2" type="password" autocomplete="new-password"></div>
+        <button class="btn btn-primary btn-block" id="btn-change-password">Set password</button>
+        <button class="back-link" id="btn-cp-sign-out" style="margin-top:14px;">Sign out instead</button>
+      </div></div>
+    `;
+  },
+  bindChangePassword(){
+    const submit = () => this.changePassword(
+      document.getElementById('in-newpass').value,
+      document.getElementById('in-newpass2').value
+    );
+    document.getElementById('btn-change-password').addEventListener('click', submit);
+    document.getElementById('in-newpass2').addEventListener('keydown', e => { if(e.key==='Enter') submit(); });
+    document.getElementById('btn-cp-sign-out').addEventListener('click', () => this.switchIdentity());
   },
 
   renderAppShell(){
@@ -1367,34 +1351,10 @@ const App = {
   renderMyTeam(){
     if(!this.state.allStepsLoaded) return `<div class="panel"><div class="loading">Loading team info…</div></div>`;
     const team = this.getMyTeam();
-    if(!team) return this.renderTeamBrowser();
+    if(!team){
+      return `<div class="panel"><div class="empty">You haven't been assigned to a team yet. Ask your admin to add you to one.</div></div>`;
+    }
     return this.renderTeamRoster(team);
-  },
-
-  renderTeamBrowser(){
-    const teams = Object.values(this.state.teams);
-    const available = teams.filter(t => t.members.length < TEAM_SIZE_LIMIT);
-    const full = teams.filter(t => t.members.length >= TEAM_SIZE_LIMIT);
-
-    const teamRow = (t, joinable) => `<div class="team-card">
-      <div><div class="tname">${t.name}</div><div class="tmeta">${t.members.length}/${TEAM_SIZE_LIMIT} members · captain ${this.state.users[t.captainUid] ? this.state.users[t.captainUid].name : '—'}</div></div>
-      ${joinable ? `<button class="btn btn-primary btn-sm" data-role="join-team" data-teamid="${t.id}">Join</button>` : `<span class="tag tag-full">Full</span>`}
-    </div>`;
-
-    return `
-      <div class="panel">
-        <h3>Start or join a team</h3>
-        <div class="form-inline">
-          <div class="field" style="margin-bottom:0;flex:1;min-width:180px;"><label>New team name</label><input type="text" id="in-teamname" placeholder="Trail Blazers"></div>
-          <button class="btn btn-primary" id="btn-create-team">Create team</button>
-        </div>
-      </div>
-      <div class="panel">
-        <h3>Available teams (${available.length})</h3>
-        ${available.length ? available.map(t=>teamRow(t,true)).join('') : `<div class="empty">No open teams yet — start one above.</div>`}
-      </div>
-      ${full.length ? `<div class="panel"><h3>Full teams (${full.length})</h3>${full.map(t=>teamRow(t,false)).join('')}</div>` : ''}
-    `;
   },
 
   renderTeamRoster(team){
@@ -1844,9 +1804,6 @@ const App = {
       el.addEventListener('click', (e) => { if(e.target === el) this.closeModal(); });
     });
 
-    const createTeamBtn = document.getElementById('btn-create-team');
-    if(createTeamBtn) createTeamBtn.addEventListener('click', () => this.createTeam(document.getElementById('in-teamname').value));
-    root.querySelectorAll('[data-role="join-team"]').forEach(el => el.addEventListener('click', () => this.joinTeam(el.dataset.teamid)));
     root.querySelectorAll('[data-role="remove-member"]').forEach(el => el.addEventListener('click', () => this.removeMember(el.dataset.teamid, el.dataset.uid)));
     const leaveBtn = root.querySelector('[data-role="leave-team"]');
     if(leaveBtn) leaveBtn.addEventListener('click', () => this.leaveTeam());
