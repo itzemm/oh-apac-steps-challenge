@@ -84,7 +84,6 @@ img{max-width:100%;}
 .trail{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin-bottom:20px;}
 .trail-track{display:flex;align-items:center;}
 .trail-dot-wrap{display:flex;flex-direction:column;align-items:center;flex:1;position:relative;}
-.trail-dot-wrap:last-child{flex:0 0 auto;}
 .trail-line-row{display:flex;align-items:center;width:100%;}
 .trail-line{height:2px;flex:1;background:var(--line-strong);}
 .trail-line.filled{background:var(--forest);}
@@ -1207,19 +1206,40 @@ const App = {
       return `<div class="panel"><div class="empty">${cfg.startDate ? `The challenge starts on ${cfg.startDate} (Singapore time). Check back then.` : "The admin hasn't set a start date yet. Check back soon."}</div></div>`;
     }
 
+    // Start, one stop per week, End — evenly spaced (see .trail-dot-wrap,
+    // which gives every stop equal flex so the gaps stay identical instead
+    // of the last one shrinking to fit its own content).
+    const stops = [{ kind:'start', label:'Start' }];
+    for(let w=0; w<cfg.weeks; w++) stops.push({ kind:'week', label:'Week '+(w+1), weekIndex:w });
+    stops.push({ kind:'end', label:'End' });
+
+    const stopFilled = (stop) => {
+      if(stop.kind === 'start') return true;
+      if(stop.kind === 'end') return status.ended;
+      return this.totalStepsInRange(this.state.mySteps, stop.weekIndex) > 0;
+    };
+
     let trailHtml = `<div class="trail"><div class="trail-track">`;
-    for(let w=0; w<cfg.weeks; w++){
-      const weekTotal = this.totalStepsInRange(this.state.mySteps, w);
-      const proof = this.weekProofOf(this.state.mySteps, w);
-      const prevTotal = w>0 ? this.totalStepsInRange(this.state.mySteps, w-1) : 0;
-      const wStatus = this.getWeekStatus(w);
+    stops.forEach((stop, i) => {
       let dotClass = 'week-dot';
-      if(weekTotal) dotClass += proof ? ' done' : ' partial';
-      if(wStatus === 'editable') dotClass += ' today';
-      if(wStatus === 'future') dotClass += ' upcoming';
-      const otterMarker = wStatus === 'editable' ? `<img class="trail-otter" src="assets/otters/otter-lion.png" alt="">` : '';
-      trailHtml += `<div class="trail-dot-wrap">${otterMarker}<div class="trail-line-row">${w>0?'<div class="trail-line'+(prevTotal?' filled':'')+'"></div>':'<div style="flex:none;width:0;"></div>'}<div class="${dotClass}"></div>${w<cfg.weeks-1?'<div class="trail-line'+(weekTotal?' filled':'')+'"></div>':'<div style="flex:none;width:0;"></div>'}</div><div class="trail-dot-label">Week ${w+1}</div></div>`;
-    }
+      let otterMarker = '';
+      if(stop.kind === 'start'){
+        dotClass += ' done';
+      } else if(stop.kind === 'end'){
+        dotClass += status.ended ? ' done' : ' upcoming';
+      } else {
+        const weekTotal = this.totalStepsInRange(this.state.mySteps, stop.weekIndex);
+        const proof = this.weekProofOf(this.state.mySteps, stop.weekIndex);
+        const wStatus = this.getWeekStatus(stop.weekIndex);
+        if(weekTotal) dotClass += proof ? ' done' : ' partial';
+        if(wStatus === 'editable') dotClass += ' today';
+        if(wStatus === 'future') dotClass += ' upcoming';
+        otterMarker = wStatus === 'editable' ? `<img class="trail-otter" src="assets/otters/otter-lion.png" alt="">` : '';
+      }
+      const lineBefore = i>0 ? `<div class="trail-line${stopFilled(stops[i-1])?' filled':''}"></div>` : '<div style="flex:none;width:0;"></div>';
+      const lineAfter = i<stops.length-1 ? `<div class="trail-line${stopFilled(stop)?' filled':''}"></div>` : '<div style="flex:none;width:0;"></div>';
+      trailHtml += `<div class="trail-dot-wrap">${otterMarker}<div class="trail-line-row">${lineBefore}<div class="${dotClass}"></div>${lineAfter}</div><div class="trail-dot-label">${stop.label}</div></div>`;
+    });
     trailHtml += `</div></div>`;
 
     const funHtml = this.renderFunStats(this.getFunFacts('my', myTotal));
