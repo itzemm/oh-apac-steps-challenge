@@ -40,7 +40,11 @@ service cloud.firestore {
         (isSelf(uid) && request.resource.data.role == resource.data.role)
         || isAdmin()
       );
-      allow delete: if false;
+      // Only an admin, and only pre-launch by app-level convention (the
+      // Admin tab's roster tools refuse once the challenge has started) —
+      // this is what lets re-keying the roster wipe and recreate participant
+      // accounts cleanly during setup, before there's any real data at stake.
+      allow delete: if isAdmin();
     }
 
     // Teams are provisioned the same way as users (see above) — only an admin
@@ -71,7 +75,9 @@ service cloud.firestore {
       allow create: if isSelf(uid) && !('verified' in request.resource.data);
       allow update: if isAdmin()
         || (isSelf(uid) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['verified']));
-      allow delete: if false;
+      // Admin-only, and only meaningful pre-launch (see users/{uid} above) —
+      // wiped alongside a user's profile when the roster is re-keyed.
+      allow delete: if isAdmin();
     }
   }
 }
