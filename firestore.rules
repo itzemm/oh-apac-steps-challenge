@@ -79,5 +79,20 @@ service cloud.firestore {
       // wiped alongside a user's profile when the roster is re-keyed.
       allow delete: if isAdmin();
     }
+
+    // Proof photos, kept in their own doc separate from steps/{uid} so that
+    // collection stays small — the one that's bulk-fetched for the Admin
+    // tab's per-week breakdown. Photos themselves are only ever fetched one
+    // document at a time (a specific participant) or in bulk deliberately
+    // (the admin proof gallery / ZIP export), never automatically for
+    // everyone the way steps/{uid} totals used to be. Same read/write shape
+    // as steps/{uid}: owner writes their own, admin can also write (matches
+    // steps/{uid}'s admin-update path) and delete (roster re-key wipes).
+    match /proofs/{uid} {
+      allow read: if isSignedIn();
+      allow create: if isSelf(uid);
+      allow update: if isAdmin() || isSelf(uid);
+      allow delete: if isAdmin();
+    }
   }
 }

@@ -269,7 +269,7 @@ import {
   onAuthStateChanged, signOut, createUserWithEmailAndPassword
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
 import {
-  getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection
+  getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
 
 // ---------- Firebase setup ----------
@@ -462,8 +462,13 @@ const App = {
     teams: {},
     bonus: {},
     mySteps: null,
+    myProofs: null,
     allSteps: {},
     allStepsLoaded: false,
+    viewedProofs: {},
+    allProofs: {},
+    allProofsLoaded: false,
+    allProofsLoading: false,
     view: 'trail',
     lbTab: null,
     lbMode: 'team',
@@ -555,19 +560,87 @@ const App = {
   },
   async saveConfig(){ await setDoc(doc(db,'config','main'), this.state.config, { merge:true }); },
 
+  // Proof photos live in their own doc (proofs/{uid}), separate from steps/{uid}
+  // (daily counts + a hasProof boolean map + review status). This is what lets
+  // the Leaderboard/My Team/Admin table work from small documents instead of
+  // bulk-downloading everyone's embedded photos on every visit — see the
+  // "Scaling to hundreds of participants" note in README for the full reasoning.
   async loadMySteps(){
     const uid = this.state.identity.uid;
+    const emptySteps = { name:this.state.identity.name, email:this.state.identity.email, days:{}, hasProof:{} };
+    const emptyProofs = { weekProof:{} };
     try{
-      const snap = await getDoc(doc(db,'steps',uid));
-      this.state.mySteps = snap.exists() ? snap.data() : { name:this.state.identity.name, email:this.state.identity.email, days:{}, weekProof:{} };
+      const [stepsSnap, proofsSnap] = await Promise.all([
+        getDoc(doc(db,'steps',uid)),
+        getDoc(doc(db,'proofs',uid))
+      ]);
+      // Merged over the defaults, not used bare — a steps doc can exist with
+      // only `hasProof` set (created by saveMyProof() before any day was
+      // ever saved), and days/hasProof must never come back undefined.
+      this.state.mySteps = stepsSnap.exists() ? { ...emptySteps, ...stepsSnap.data() } : emptySteps;
+      this.state.myProofs = proofsSnap.exists() ? proofsSnap.data() : emptyProofs;
     }catch(e){
-      this.state.mySteps = { name:this.state.identity.name, email:this.state.identity.email, days:{}, weekProof:{} };
+      this.state.mySteps = emptySteps;
+      this.state.myProofs = emptyProofs;
     }
   },
+  // Computes { total, byWeek } from mySteps.days — stored redundantly on the
+  // user's own users/{uid} doc (written in the same batch as steps/{uid}) so
+  // the Leaderboard and My Team tabs can read everyone's totals straight off
+  // the `users` collection they already fetch at boot, instead of needing a
+  // separate bulk read of the whole `steps` collection.
+  computeTotals(days){
+    const cfg = this.state.config;
+    const byWeek = [];
+    for(let w=0; w<cfg.weeks; w++){
+      let sum = 0;
+      if(cfg.startDate){
+        for(let d=0; d<7; d++){
+          const date = this.addDays(cfg.startDate, w*7 + d);
+          const entry = days[date];
+          if(entry) sum += entry.steps || 0;
+        }
+      }
+      byWeek.push(sum);
+    }
+    const total = Object.values(days).reduce((s,d)=>s+(d.steps||0),0);
+    return { total, byWeek };
+  },
   async saveMySteps(){
-    await setDoc(doc(db,'steps', this.state.identity.uid), this.state.mySteps);
+    const uid = this.state.identity.uid;
+    const { total, byWeek } = this.computeTotals(this.state.mySteps.days);
+    const batch = writeBatch(db);
+    // set+merge, and only the fields this actually changes (days) — a plain
+    // overwrite of the whole cached mySteps object would risk clobbering
+    // hasProof/verified back to whatever this tab last loaded, if either
+    // changed elsewhere (another tab's proof upload, an admin's review)
+    // since then.
+    batch.set(doc(db,'steps',uid), { name:this.state.mySteps.name, email:this.state.mySteps.email, days:this.state.mySteps.days }, { merge:true });
+    batch.update(doc(db,'users',uid), { total, byWeek });
+    await batch.commit();
+    if(this.state.users[uid]) Object.assign(this.state.users[uid], { total, byWeek });
+  },
+  async saveMyProof(weekIndex, dataUrl){
+    const uid = this.state.identity.uid;
+    const entry = { proof: dataUrl, submittedAt: new Date().toISOString() };
+    const batch = writeBatch(db);
+    // set+merge (deep-merges nested maps) rather than building the full
+    // weekProof object from the local cache and overwriting — if another
+    // tab/device uploaded a different week's proof since this one last
+    // loaded, a full overwrite here would silently drop it.
+    batch.set(doc(db,'proofs',uid), { weekProof: { [weekIndex]: entry } }, { merge:true });
+    batch.set(doc(db,'steps',uid), { hasProof: { [weekIndex]: true } }, { merge:true });
+    await batch.commit();
+    if(!this.state.myProofs.weekProof) this.state.myProofs.weekProof = {};
+    this.state.myProofs.weekProof[weekIndex] = entry;
+    if(!this.state.mySteps.hasProof) this.state.mySteps.hasProof = {};
+    this.state.mySteps.hasProof[weekIndex] = true;
   },
 
+  // Admin-only: the full steps collection (daily counts, hasProof flags,
+  // review status — no photos, those are fetched per-person on demand from
+  // `proofs`). Only the Admin tab triggers this; Leaderboard and My Team read
+  // totals straight off `users` instead. See setView().
   async loadAllSteps(){
     this.state.allStepsLoaded = false;
     this.render();
@@ -578,6 +651,35 @@ const App = {
       this.state.allSteps = results;
     }catch(e){ this.state.allSteps = {}; }
     this.state.allStepsLoaded = true;
+    this.render();
+  },
+  // Fetches one specific person's proof photos on demand (admin detail modal,
+  // AI audit) — never bulk-loaded for everyone at once.
+  async loadProofsFor(uid){
+    if(this.state.viewedProofs[uid]) return this.state.viewedProofs[uid];
+    try{
+      const snap = await getDoc(doc(db,'proofs',uid));
+      this.state.viewedProofs[uid] = snap.exists() ? snap.data() : { weekProof:{} };
+    }catch(e){
+      this.state.viewedProofs[uid] = { weekProof:{} };
+    }
+    return this.state.viewedProofs[uid];
+  },
+  // Bulk-fetches every participant's photos at once — only for the two admin
+  // actions that genuinely need all of them (the proof gallery, the ZIP
+  // export), triggered deliberately by a button click, never automatically.
+  async loadAllProofs(){
+    if(this.state.allProofsLoaded || this.state.allProofsLoading) return;
+    this.state.allProofsLoading = true;
+    this.render();
+    try{
+      const snap = await getDocs(collection(db,'proofs'));
+      const results = {};
+      snap.forEach(d => { results[d.id] = d.data(); });
+      this.state.allProofs = results;
+    }catch(e){ this.state.allProofs = {}; }
+    this.state.allProofsLoaded = true;
+    this.state.allProofsLoading = false;
     this.render();
   },
 
@@ -633,7 +735,11 @@ const App = {
 
   setView(v){
     this.state.view = v;
-    if((v === 'myteam' || v === 'leaderboard' || v === 'admin') && !this.state.allStepsLoaded){
+    // Only the Admin tab needs the full steps collection (per-week breakdown,
+    // proof flags, review status) — Leaderboard and My Team read totals off
+    // `users` instead (see userTotal()/userWeekTotal()), so they don't
+    // trigger this bulk, admin-only fetch.
+    if(v === 'admin' && !this.state.allStepsLoaded){
       this.loadAllSteps();
     } else {
       this.render();
@@ -723,6 +829,19 @@ const App = {
   weekProofOf(record, weekIndex){
     return record && record.weekProof ? record.weekProof[weekIndex] : null;
   },
+  // Reads a participant's precomputed total/byWeek straight off their
+  // users/{uid} doc (already fetched at boot for everyone) — used by
+  // Leaderboard and My Team so those views never need to bulk-fetch the
+  // whole `steps` collection just to add up totals.
+  userTotal(uid){
+    const u = this.state.users[uid];
+    return u && u.total ? u.total : 0;
+  },
+  userWeekTotal(uid, sel){
+    if(sel === 'overall') return this.userTotal(uid);
+    const u = this.state.users[uid];
+    return u && u.byWeek && u.byWeek[sel] ? u.byWeek[sel] : 0;
+  },
 
   // ---------- Daily steps entry, weekly proof ----------
   async saveDay(date){
@@ -760,9 +879,7 @@ const App = {
     if(!file) return;
     try{
       const dataUrl = await this.compressImage(file);
-      if(!this.state.mySteps.weekProof) this.state.mySteps.weekProof = {};
-      this.state.mySteps.weekProof[weekIndex] = { proof: dataUrl, submittedAt: new Date().toISOString() };
-      await this.saveMySteps();
+      await this.saveMyProof(weekIndex, dataUrl);
       this.render();
     }catch(e){ alert('Could not process that image. Try a different file.'); }
   },
@@ -917,6 +1034,7 @@ const App = {
     for(const u of toWipe){
       await deleteDoc(doc(db,'users',u.uid)).catch(()=>{});
       await deleteDoc(doc(db,'steps',u.uid)).catch(()=>{});
+      await deleteDoc(doc(db,'proofs',u.uid)).catch(()=>{});
     }
     for(const teamId of Object.keys(this.state.teams)){
       const teamRef = doc(db,'teams',teamId);
@@ -1059,7 +1177,7 @@ const App = {
 
   // ---------- Missing-proof flag ----------
   missingIssues(user){
-    const rec = this.state.allSteps[user.uid] || { days:{}, weekProof:{} };
+    const rec = this.state.allSteps[user.uid] || { days:{}, hasProof:{} };
     const status = this.getChallengeStatus();
     const cfg = this.state.config;
     const issues = [];
@@ -1067,9 +1185,9 @@ const App = {
       const locked = status.ended ? true : (status.started && w < status.weekIndex);
       if(!locked) continue;
       const weekTotal = this.totalStepsInRange(rec, w);
-      const proof = this.weekProofOf(rec, w);
+      const hasProof = rec.hasProof && rec.hasProof[w];
       if(!weekTotal) issues.push({ week:w, type:'missing' });
-      else if(!proof) issues.push({ week:w, type:'no-proof' });
+      else if(!hasProof) issues.push({ week:w, type:'no-proof' });
     }
     return issues;
   },
@@ -1096,11 +1214,11 @@ const App = {
     header.push('Total Steps','Bonus Points','Overall Score','Missing Proof Weeks');
     const rows = [header];
     Object.values(this.state.users).forEach(u => {
-      const rec = this.state.allSteps[u.uid] || { days:{}, weekProof:{} };
+      const rec = this.state.allSteps[u.uid] || { days:{}, hasProof:{} };
       const row = [u.name, u.email, u.country||'', u.teamId && this.state.teams[u.teamId] ? this.state.teams[u.teamId].name : '', u.role];
       for(let w=0; w<cfg.weeks; w++){
         row.push(this.totalStepsInRange(rec, w) || '');
-        row.push(this.weekProofOf(rec, w) ? 'Yes' : 'No');
+        row.push((rec.hasProof && rec.hasProof[w]) ? 'Yes' : 'No');
       }
       const total = this.totalStepsOf(rec);
       const bonus = this.individualBonusPoints(u.uid);
@@ -1145,10 +1263,11 @@ const App = {
   },
   async exportProofZip(){
     if(typeof JSZip === 'undefined'){ alert('The ZIP library failed to load. Check your connection and try again.'); return; }
+    if(!this.state.allProofsLoaded) await this.loadAllProofs();
     const zip = new JSZip();
     let count = 0;
     Object.values(this.state.users).forEach(u => {
-      const rec = this.state.allSteps[u.uid];
+      const rec = this.state.allProofs[u.uid];
       if(!rec || !rec.weekProof) return;
       Object.entries(rec.weekProof).forEach(([w, entry]) => {
         if(!entry || !entry.proof) return;
@@ -1338,11 +1457,12 @@ const App = {
       await this.loadUsers();
       await this.loadTeams();
 
-      // Wipe every current non-admin's profile + steps, and every team.
+      // Wipe every current non-admin's profile + steps + proofs, and every team.
       for(const u of Object.values(this.state.users)){
         if(u.role === 'admin') continue;
         await deleteDoc(doc(db,'users',u.uid)).catch(()=>{});
         await deleteDoc(doc(db,'steps',u.uid)).catch(()=>{});
+        await deleteDoc(doc(db,'proofs',u.uid)).catch(()=>{});
       }
       for(const teamId of Object.keys(this.state.teams)){
         const teamRef = doc(db,'teams',teamId);
@@ -1392,14 +1512,27 @@ const App = {
 
   async resetChallenge(){
     if(!confirm("This clears everyone's steps and proof, and the start date. This cannot be undone. Continue?")) return;
-    const snap = await getDocs(collection(db,'steps'));
-    await Promise.all(snap.docs.map(d => updateDoc(d.ref, { days:{}, weekProof:{}, verified:{} })));
+    const [stepsSnap, proofsSnap] = await Promise.all([
+      getDocs(collection(db,'steps')),
+      getDocs(collection(db,'proofs'))
+    ]);
+    const emptyByWeek = new Array(this.state.config.weeks).fill(0);
+    await Promise.all([
+      ...stepsSnap.docs.map(d => updateDoc(d.ref, { days:{}, hasProof:{}, verified:{} })),
+      ...proofsSnap.docs.map(d => updateDoc(d.ref, { weekProof:{} })),
+      ...Object.keys(this.state.users).map(uid => updateDoc(doc(db,'users',uid), { total:0, byWeek:emptyByWeek }).catch(()=>{}))
+    ]);
     this.state.config.startDate = null;
     await this.saveConfig();
     this.state.mySteps.days = {};
-    this.state.mySteps.weekProof = {};
+    this.state.mySteps.hasProof = {};
+    this.state.myProofs.weekProof = {};
+    Object.values(this.state.users).forEach(u => { u.total = 0; u.byWeek = emptyByWeek.slice(); });
     this.state.allSteps = {};
     this.state.allStepsLoaded = false;
+    this.state.viewedProofs = {};
+    this.state.allProofs = {};
+    this.state.allProofsLoaded = false;
     this.state.auditResults = {};
     this.render();
   },
@@ -1432,7 +1565,8 @@ const App = {
     this.render();
     try{
       const rec = this.state.allSteps[uid];
-      const proofEntry = this.weekProofOf(rec, weekIndex);
+      const proofs = await this.loadProofsFor(uid);
+      const proofEntry = this.weekProofOf(proofs, weekIndex);
       if(!proofEntry) throw new Error('No proof photo uploaded for this week.');
       const match = /^data:([^;]+);base64,(.*)$/s.exec(proofEntry.proof);
       if(!match) throw new Error('Could not read the proof image.');
@@ -1477,7 +1611,14 @@ const App = {
     this.render();
   },
 
-  openModal(modal){ this.state.modal = modal; this.render(); },
+  openModal(modal){
+    this.state.modal = modal;
+    this.render();
+    // Photos for one person, fetched only now that an admin is actually
+    // looking at them — not bundled into the bulk `steps` fetch this modal's
+    // other data (day-by-day counts, review status) already had loaded.
+    if(modal.type === 'userDetail') this.loadProofsFor(modal.uid).then(() => this.render());
+  },
   closeModal(){ this.state.modal = null; this.render(); },
 
   // ---------- Render ----------
@@ -1615,7 +1756,7 @@ const App = {
         dotClass += status.ended ? ' done' : ' upcoming';
       } else {
         const weekTotal = this.totalStepsInRange(this.state.mySteps, stop.weekIndex);
-        const proof = this.weekProofOf(this.state.mySteps, stop.weekIndex);
+        const proof = this.weekProofOf(this.state.myProofs, stop.weekIndex);
         const wStatus = this.getWeekStatus(stop.weekIndex);
         if(weekTotal) dotClass += proof ? ' done' : ' partial';
         if(wStatus === 'editable') dotClass += ' today';
@@ -1666,7 +1807,7 @@ const App = {
     const cfg = this.state.config;
     const wStatus = this.getWeekStatus(weekIndex);
     const weekTotal = this.totalStepsInRange(this.state.mySteps, weekIndex);
-    const proofEntry = this.weekProofOf(this.state.mySteps, weekIndex);
+    const proofEntry = this.weekProofOf(this.state.myProofs, weekIndex);
     const dateRange = cfg.startDate ? this.weekDateRange(weekIndex) : '';
     const isLocked = wStatus === 'locked';
 
@@ -1751,7 +1892,6 @@ const App = {
 
   // ---------- My Team ----------
   renderMyTeam(){
-    if(!this.state.allStepsLoaded) return `<div class="panel"><div class="loading">Loading team info…</div></div>`;
     const team = this.getMyTeam();
     if(!team){
       return this.renderTeamBrowser();
@@ -1791,7 +1931,7 @@ const App = {
   renderTeamRoster(team){
     const prestart = this.isPrestart();
     const isCaptain = team.captainUid === this.state.identity.uid;
-    const teamTotal = team.members.reduce((s,m)=> s + this.totalStepsOf(this.state.allSteps[m]), 0);
+    const teamTotal = team.members.reduce((s,m)=> s + this.userTotal(m), 0);
     const funHtml = this.renderFunStats(this.getFunFacts('team', teamTotal, team.id));
 
     const status = this.getChallengeStatus();
@@ -1800,7 +1940,7 @@ const App = {
       const weekIdx = status.ended ? this.state.config.weeks - 1 : status.weekIndex;
       const raceEntries = team.members.map(m => {
         const u = this.state.users[m];
-        return { name: u ? u.name : m, value: this.totalStepsInRange(this.state.allSteps[m], weekIdx) };
+        return { name: u ? u.name : m, value: this.userWeekTotal(m, weekIdx) };
       });
       raceHtml = `<div class="panel">
         <h3>Week ${weekIdx+1} race</h3>
@@ -1909,7 +2049,6 @@ const App = {
   },
 
   renderLeaderboard(){
-    if(!this.state.allStepsLoaded) return `<div class="panel"><div class="loading">Loading leaderboard…</div></div>`;
     const cfg = this.state.config;
     if(this.state.lbTab === null){
       const st = this.getChallengeStatus();
@@ -1923,13 +2062,13 @@ const App = {
     const unit = sel === 'overall' ? 'pts' : 'steps';
 
     const teams = Object.values(this.state.teams).map(t => {
-      let value = t.members.reduce((s,m)=> s + this.totalStepsInRange(this.state.allSteps[m], sel), 0);
+      let value = t.members.reduce((s,m)=> s + this.userWeekTotal(m, sel), 0);
       if(sel === 'overall') value += this.teamBonusPoints(t.id);
       return { id: t.id, name: t.name, value };
     }).sort((a,b)=>b.value-a.value);
 
     const individuals = Object.values(this.state.users).map(u => {
-      let value = this.totalStepsInRange(this.state.allSteps[u.uid], sel);
+      let value = this.userWeekTotal(u.uid, sel);
       if(sel === 'overall') value += this.individualBonusPoints(u.uid);
       return { id: u.uid, name: u.name, value };
     }).sort((a,b)=>b.value-a.value);
@@ -2016,7 +2155,7 @@ const App = {
     html += `<th>Role</th><th></th></tr></thead><tbody>`;
 
     users.forEach(({u, issues}) => {
-      const rec = this.state.allSteps[u.uid] || { days:{}, weekProof:{} };
+      const rec = this.state.allSteps[u.uid] || { days:{}, hasProof:{} };
       const total = this.totalStepsOf(rec);
       const teamCell = prestart
         ? `<select data-role="assign-team" data-uid="${u.uid}" style="font-size:12px;padding:2px 4px;">
@@ -2028,7 +2167,7 @@ const App = {
       if(hasStart){
         for(let w=0; w<cfg.weeks; w++){
           const weekTotal = this.totalStepsInRange(rec, w);
-          const proof = this.weekProofOf(rec, w);
+          const proof = rec.hasProof && rec.hasProof[w];
           const wStatus = this.getWeekStatus(w);
           let cell;
           const review = rec.verified && rec.verified[w];
@@ -2064,10 +2203,20 @@ const App = {
     return html;
   },
 
+  // Photos live in their own `proofs` collection, fetched in bulk only when
+  // an admin deliberately asks to browse or export them — not automatically
+  // alongside the rest of the Admin tab, which would otherwise mean every
+  // admin visit downloads every participant's photos regardless of need.
   renderAdminProof(){
+    if(!this.state.allProofsLoaded){
+      return `<div class="panel"><h3>Proof photos</h3>
+        <div style="font-size:13px;color:var(--ink-soft);margin-bottom:10px;">Not loaded yet — these are fetched separately from the rest of this tab so a routine visit doesn't download every participant's photos.</div>
+        <button class="btn btn-sm" id="btn-load-proofs" ${this.state.allProofsLoading ? 'disabled' : ''}>${this.state.allProofsLoading ? 'Loading…' : 'Load proof photos'}</button>
+      </div>`;
+    }
     const rows = [];
     Object.values(this.state.users).forEach(u => {
-      const rec = this.state.allSteps[u.uid];
+      const rec = this.state.allProofs[u.uid];
       if(!rec) return;
       for(let w=0; w<this.state.config.weeks; w++){
         const proof = this.weekProofOf(rec, w);
@@ -2203,14 +2352,15 @@ const App = {
     }
     if(m.type === 'userDetail'){
       const u = this.state.users[m.uid];
-      const rec = this.state.allSteps[m.uid] || { days:{}, weekProof:{} };
+      const rec = this.state.allSteps[m.uid] || { days:{}, hasProof:{} };
+      const proofs = this.state.viewedProofs[m.uid] || null;
       const cfg = this.state.config;
       const isAdmin = (this.state.users[this.state.identity.uid] || {}).role === 'admin';
 
       let weekBlocks = '';
       for(let w=0; w<cfg.weeks; w++){
         const weekTotal = this.totalStepsInRange(rec, w);
-        const proof = this.weekProofOf(rec, w);
+        const proof = proofs ? this.weekProofOf(proofs, w) : null;
         const review = rec.verified && rec.verified[w];
         const reviewStatus = review ? review.status : 'pending';
 
@@ -2249,7 +2399,7 @@ const App = {
             </div>
           </div>
           <div class="wbody" style="margin-bottom:6px;">
-            ${proof ? `<img class="thumb" src="${proof.proof}" data-role="thumb" data-src="${proof.proof}">` : `<div class="thumb-placeholder">no proof</div>`}
+            ${proofs === null ? `<div class="thumb-placeholder">loading…</div>` : (proof ? `<img class="thumb" src="${proof.proof}" data-role="thumb" data-src="${proof.proof}">` : `<div class="thumb-placeholder">no proof</div>`)}
             ${isAdmin ? `<button class="btn btn-sm" data-role="audit-week" data-uid="${m.uid}" data-week="${w}" ${(!proof || !weekTotal) ? 'disabled' : ''}>🤖 Check with AI</button>` : ''}
           </div>
           ${isAdmin ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;">
@@ -2315,6 +2465,8 @@ const App = {
     if(randomAuditBtn) randomAuditBtn.addEventListener('click', () => this.pickRandomAudit());
     const exportProofBtn = document.getElementById('btn-export-proof');
     if(exportProofBtn) exportProofBtn.addEventListener('click', () => this.exportProofZip());
+    const loadProofsBtn = document.getElementById('btn-load-proofs');
+    if(loadProofsBtn) loadProofsBtn.addEventListener('click', () => this.loadAllProofs());
     const clearAllBtn = document.getElementById('btn-clear-all-participants');
     if(clearAllBtn) clearAllBtn.addEventListener('click', () => this.clearAllParticipants());
     const rebuildTeamsBtn = document.getElementById('btn-rebuild-teams');
