@@ -6,9 +6,10 @@ services:
     staticPublishPath: .
     pullRequestPreviewsEnabled: false
 
-# The Gemini API key and Firebase Admin SDK access used to live in a second
-# Node service here (oh-apac-steps-audit). That's been retired in favor of
-# Cloud Functions (see /functions) — same "never let the browser see these
-# secrets" job, but running inside the Firebase project instead of a
-# separately-billed Render service. Deploy those with:
-#   npx firebase-tools deploy --only functions
+# There used to be a second Node service here (oh-apac-steps-audit) holding
+# the Gemini API key and Firebase Admin SDK access. Both were retired to keep
+# this project entirely free with no billing account required anywhere:
+# participant management now runs client-side (see ensureUserClient() in
+# index.html, gated by firestore.rules), and the Gemini key is a restricted,
+# domain-locked key embedded directly in index.html. See the README's
+# "AI proof-photo audits" and "Provisioning accounts" sections.

@@ -251,14 +251,11 @@ table.roster td{padding:9px 8px;border-bottom:1px solid var(--line);vertical-ali
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
 import {
   getAuth, signInWithEmailAndPassword, updatePassword,
-  onAuthStateChanged, signOut
+  onAuthStateChanged, signOut, createUserWithEmailAndPassword
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
 import {
   getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
-import {
-  getFunctions, httpsCallable
-} from "https://www.gstatic.com/firebasejs/10.13.2/firebase-functions.js";
 
 // ---------- Firebase setup ----------
 const firebaseConfig = {
@@ -272,26 +269,36 @@ const firebaseConfig = {
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
 const db = getFirestore(fbApp);
-const functions = getFunctions(fbApp);
 
-// Accounts are provisioned entirely by the admin (see /scripts) — there is no
-// self-service sign-up. A "username" like trail-blazers_alice-tan is really
-// just the local part of a synthetic Firebase Auth email; this suffix turns
-// it into one consistently, both here and in scripts/lib/naming.js.
+// A second, throwaway Firebase app instance used ONLY to create new Auth
+// accounts. createUserWithEmailAndPassword() signs in as the account it just
+// created on whichever auth instance you call it with — running it on this
+// secondary instance (instead of `auth` above) means the admin's own signed-in
+// session never gets touched. This is what lets "Add a participant" work with
+// no backend at all: Firestore rules (isAdmin()) gate who may write the
+// resulting profile/team docs, so this can't be used for self-registration.
+const provisioningApp = initializeApp(firebaseConfig, 'participant-provisioning');
+const provisioningAuth = getAuth(provisioningApp);
+
+// Accounts are provisioned entirely by the admin (see /scripts, or the Admin
+// tab) — there is no self-service sign-up. A "username" like
+// trail-blazers_alice-tan is really just the local part of a synthetic
+// Firebase Auth email; this suffix turns it into one consistently, both here
+// and in scripts/lib/naming.js.
 const USERNAME_EMAIL_DOMAIN = '@ohapac.local';
 function usernameToEmail(username){
   return username.trim().toLowerCase().replace(/\s+/g, '_') + USERNAME_EMAIL_DOMAIN;
 }
 
-// Cloud Functions (see /functions in this repo) hold two things the browser
-// must never see directly: the Gemini API key, and Firebase Admin SDK access
-// used for participant management. Callable functions verify the caller's
-// Firebase ID token automatically, and the admin ones additionally require
-// role:'admin' in Firestore.
-const auditPhotoFn = httpsCallable(functions, 'auditPhoto');
-const addParticipantFn = httpsCallable(functions, 'addParticipant');
-const deleteParticipantFn = httpsCallable(functions, 'deleteParticipant');
-const importRosterFn = httpsCallable(functions, 'importRoster');
+// The Gemini API key for AI proof-photo audits. This is genuinely visible to
+// anyone who views this public repo's source — there is no backend holding it
+// server-side. That's an accepted tradeoff (see README's "AI proof-photo
+// audits" section): replace this with your OWN key, then in Google Cloud
+// Console lock it down to (a) only the Generative Language API, (b) only HTTP
+// referrers matching your site's actual domain(s), and (c) a low daily quota
+// cap — so a scraped key can burn a little quota at worst, not run up a bill
+// or be reused elsewhere.
+const GEMINI_API_KEY = 'REPLACE_WITH_YOUR_OWN_RESTRICTED_GEMINI_KEY';
 
 // A reviewed week's status: 'verified' | 'rejected' | 'needs_review', or no
 // entry at all for "pending" (not reviewed yet). Colors follow Excel's
@@ -1013,55 +1020,147 @@ const App = {
     this.render();
   },
   // ---------- Participant management (admin) ----------
-  // These call the Cloud Functions in /functions, which hold Firebase Admin
-  // SDK access — the only place account creation/deletion can happen, gated
-  // to callers whose Firestore profile has role:'admin'.
+  // Runs entirely client-side, no backend: ensureUserClient() creates the
+  // Auth account on the throwaway `provisioningAuth` instance (see top of
+  // file) so the admin's own session is untouched, then writes the
+  // Firestore profile/team docs on the primary `db` — gated by
+  // firestore.rules' isAdmin() check, not by anything in this code.
+  async ensureUserClient(name, username, teamId, role){
+    const email = usernameToEmail(username);
+    const existing = Object.values(this.state.users).find(u => u.email === email);
+    if(existing){
+      if(existing.teamId !== teamId){
+        await updateDoc(doc(db,'users',existing.uid), { teamId });
+        existing.teamId = teamId;
+      }
+      return { uid: existing.uid, created:false };
+    }
+    let uid;
+    try{
+      const cred = await createUserWithEmailAndPassword(provisioningAuth, email, username);
+      uid = cred.user.uid;
+    }catch(e){
+      if(e.code === 'auth/email-already-in-use'){
+        throw new Error(`"${username}" already has a login, but no profile was found for them — ask an admin to check this account manually.`);
+      }
+      throw e;
+    }finally{
+      await signOut(provisioningAuth).catch(()=>{});
+    }
+    const profile = { name, email, country:'', provider:'password', role, joinedAt:new Date().toISOString(), teamId, mustChangePassword:true };
+    await setDoc(doc(db,'users',uid), profile);
+    this.state.users[uid] = { uid, ...profile };
+    return { uid, created:true };
+  },
+  slugTeamId(teamName){
+    return teamName.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'team';
+  },
   async addParticipant(teamName, personName, captain){
     teamName = teamName.trim();
     personName = personName.trim();
     if(!teamName || !personName){ alert('Enter both a team name and a person name.'); return; }
     this.state.participantActionMsg = null;
+    const MAX_TEAM_SIZE = 5;
     try{
-      const { data: result } = await addParticipantFn({ teamName, personName, captain });
-      this.state.participantActionMsg = { type:'success', text: result.password
-        ? `${result.message} Username: ${result.username} — initial password: ${result.password}`
-        : `${result.message} (account already existed — password left unchanged)` };
+      const teamId = this.slugTeamId(teamName);
+      const teamRef = doc(db,'teams',teamId);
+      const teamSnap = await getDoc(teamRef);
+      const existingMembers = teamSnap.exists() ? (teamSnap.data().members || []) : [];
+      if(existingMembers.length >= MAX_TEAM_SIZE){
+        throw new Error(`Team "${teamName}" already has ${MAX_TEAM_SIZE} members (the max).`);
+      }
+
+      const username = `${teamName}_${personName}`.trim().replace(/\s+/g, '_');
+      const { uid, created } = await this.ensureUserClient(personName, username, teamId, 'user');
+
+      let message;
+      if(!teamSnap.exists()){
+        await setDoc(teamRef, { id:teamId, name:teamName, captainUid:uid, members:[uid], createdAt:new Date().toISOString() });
+        message = `Created new team "${teamName}" with ${personName} as captain.`;
+        this.state.teams[teamId] = { id:teamId, name:teamName, captainUid:uid, members:[uid] };
+      } else if(!existingMembers.includes(uid)){
+        const update = { members:[...existingMembers, uid] };
+        if(captain) update.captainUid = uid;
+        await updateDoc(teamRef, update);
+        message = `Added ${personName} to "${teamName}"${captain ? ' as captain' : ''}.`;
+        Object.assign(this.state.teams[teamId], update);
+      } else {
+        message = `${personName} is already on "${teamName}".`;
+      }
+
+      this.state.participantActionMsg = { type:'success', text: created
+        ? `${message} Username: ${username} — initial password: ${username}`
+        : `${message} (account already existed — password left unchanged)` };
       this.state.participantForm = { teamName:'', personName:'', captain:false };
-      await this.loadUsers();
-      await this.loadTeams();
     }catch(e){
       this.state.participantActionMsg = { type:'error', text: e.message || 'Could not add participant.' };
     }
     this.render();
   },
-  async deleteParticipant(uid){
+  deleteParticipant(uid){
     const u = this.state.users[uid];
     if(!u) return;
-    if(!confirm(`Permanently delete ${u.name}? This removes their login, profile, and all step/proof history. This cannot be undone.`)) return;
     const username = (u.email || '').split('@')[0];
     if(!username){ alert("Could not determine this account's username."); return; }
-    try{
-      const { data: result } = await deleteParticipantFn({ username });
-      delete this.state.users[uid];
-      delete this.state.allSteps[uid];
-      this.state.participantActionMsg = { type:'success', text: result.message };
-      await this.loadTeams();
-    }catch(e){
-      alert(e.message || 'Could not delete participant.');
-    }
-    this.render();
+    // Firebase deliberately has no client-side way to delete another user's
+    // Auth account — only the Admin SDK can, so this has to run from a
+    // computer, not the webpage. See scripts/delete-participant.js.
+    const cmd = `node delete-participant.js "${username}" --yes`;
+    navigator.clipboard?.writeText(cmd).catch(()=>{});
+    alert(`Deleting a login can't be done from a webpage — Firebase only allows that from a trusted machine.\n\nCopied to your clipboard. From this project's "scripts" folder, run:\n\n${cmd}`);
   },
   async importRosterCsv(file){
     if(!file) return;
     this.state.rosterImportBusy = true;
     this.state.rosterImportResult = null;
     this.render();
+    const MAX_TEAM_SIZE = 5;
     try{
       const csvText = await file.text();
-      const { data: result } = await importRosterFn({ csvText });
-      this.state.rosterImportResult = result;
-      await this.loadUsers();
+      const rows = csvText.split(/\r?\n/).filter(l => l.trim() !== '').map(l => l.split(',').map(c => c.trim()));
+      if(!rows.length) throw new Error('CSV is empty.');
+      const header = rows[0].map(h => h.toLowerCase());
+      const col = name => header.indexOf(name);
+      const idx = { team: col('team name'), captain: col('captain'), m1: col('member 1'), m2: col('member 2'), m3: col('member 3'), m4: col('member 4') };
+      if(idx.team === -1 || idx.captain === -1){
+        throw new Error('CSV must have "Team Name" and "Captain" columns (Member 1-4 optional).');
+      }
+
+      const credentials = [];
+      const skipped = [];
+
+      for(const cells of rows.slice(1)){
+        const teamName = cells[idx.team];
+        if(!teamName) continue;
+        const memberNames = [idx.captain, idx.m1, idx.m2, idx.m3, idx.m4]
+          .map(i => (i > -1 ? cells[i] : ''))
+          .filter(n => n && n.trim());
+
+        if(!memberNames.length){ skipped.push(`${teamName}: no captain given.`); continue; }
+        if(memberNames.length > MAX_TEAM_SIZE){ skipped.push(`${teamName}: ${memberNames.length} people listed, max is ${MAX_TEAM_SIZE}.`); continue; }
+
+        const teamId = this.slugTeamId(teamName);
+        const teamRef = doc(db,'teams',teamId);
+        const uids = [];
+
+        for(const personName of memberNames){
+          const username = `${teamName}_${personName}`.trim().replace(/\s+/g, '_');
+          const { uid, created } = await this.ensureUserClient(personName, username, teamId, 'user');
+          uids.push(uid);
+          if(created) credentials.push({ team:teamName, name:personName, username, password:username });
+        }
+
+        const existingTeam = await getDoc(teamRef);
+        if(!existingTeam.exists()){
+          await setDoc(teamRef, { id:teamId, name:teamName, captainUid:uids[0], members:uids, createdAt:new Date().toISOString() });
+        } else {
+          const merged = Array.from(new Set([...(existingTeam.data().members || []), ...uids]));
+          await updateDoc(teamRef, { members: merged });
+        }
+      }
+
       await this.loadTeams();
+      this.state.rosterImportResult = { credentials, skipped };
     }catch(e){
       this.state.rosterImportResult = { error: e.message || 'Import failed.' };
     }
@@ -1132,9 +1231,28 @@ const App = {
       }
       const prompt = `You are auditing a workplace step-count challenge. A participant uploaded this photo as proof for the week of ${claims[0].date} to ${claims[6].date}. They separately logged these daily step counts themselves: ${JSON.stringify(claims)}. Look closely at the photo (it's likely a phone health app or pedometer screenshot) and identify any step counts and dates it actually shows. Compare what you see against what they logged. Respond with ONLY JSON in this exact shape, no other text: {"summary": "one sentence overview", "flags": [{"date": "YYYY-MM-DD", "claimedSteps": number or null, "seenInPhoto": number or null, "issue": "short description of the mismatch, or an empty string if that date matches or the photo doesn't cover it"}]}. Include one entry in "flags" for every date listed above.`;
 
-      const { data } = await auditPhotoFn({ imageBase64, mimeType, prompt });
+      const geminiRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [
+                { text: prompt },
+                { inline_data: { mime_type: mimeType || 'image/jpeg', data: imageBase64 } }
+              ]
+            }],
+            generationConfig: { temperature: 0, responseMimeType: 'application/json' }
+          })
+        }
+      );
+      const geminiData = await geminiRes.json();
+      if(!geminiRes.ok) throw new Error(geminiData?.error?.message || 'Gemini request failed.');
+      const raw = (geminiData.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
+
       let parsed;
-      try{ parsed = JSON.parse(data.raw); }
+      try{ parsed = JSON.parse(raw); }
       catch(e){ throw new Error("Couldn't parse the AI's response."); }
       this.state.auditResults[auditKey] = { loading:false, result:parsed };
     }catch(e){
@@ -1651,7 +1769,7 @@ const App = {
         html += `<td style="white-space:nowrap;">
           <button class="btn btn-sm" data-role="view-user" data-uid="${u.uid}">View</button>
           <button class="btn btn-sm" data-role="toggle-role" data-uid="${u.uid}" data-newrole="${u.role==='admin'?'user':'admin'}">${u.role==='admin'?'Demote':'Promote'}</button>
-          <button class="btn btn-sm btn-danger" data-role="delete-participant" data-uid="${u.uid}">Delete</button>
+          <button class="btn btn-sm btn-danger" data-role="delete-participant" data-uid="${u.uid}" title="Copies the terminal command — deleting a login has to run from a computer, Firebase blocks it from a webpage">Delete…</button>
         </td>`;
         html += `</tr>`;
       });
