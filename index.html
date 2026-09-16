@@ -90,7 +90,7 @@ img{max-width:100%;}
 .week-dot.today{box-shadow:0 0 0 3px var(--amber-tint);border-color:var(--amber);}
 .week-dot.upcoming{opacity:0.5;}
 .trail-dot-label{font-size:12px;color:var(--ink-soft);margin-top:6px;}
-.trail-otter{position:absolute;top:-30px;left:50%;transform:translateX(-50%);width:28px;height:28px;object-fit:contain;filter:drop-shadow(0 2px 2px rgba(0,0,0,0.25));}
+.trail-otter{position:absolute;top:-30px;left:50%;transform:translateX(-50%);width:28px;height:28px;object-fit:contain;filter:drop-shadow(0 2px 2px rgba(0,0,0,0.25));animation:otter-walk 0.6s ease-in-out infinite;}
 
 /* ---------- Otter mascots ---------- */
 .header-logo{width:32px;height:32px;object-fit:contain;vertical-align:middle;margin-right:8px;}
@@ -106,7 +106,21 @@ img{max-width:100%;}
   border:1px solid var(--line);overflow:visible;z-index:0;}
 .race-lane-otter{position:absolute;top:2px;width:48px;height:48px;object-fit:contain;
   transform:translateX(-50%);transition:left 0.6s ease;z-index:2;
-  filter:drop-shadow(0 2px 2px rgba(0,0,0,0.25));}
+  filter:drop-shadow(0 2px 2px rgba(0,0,0,0.25));animation:otter-walk 0.6s ease-in-out infinite;}
+/* A waddling walk cycle using just rotation/bob on the static artwork (no
+   sprite frames to animate between) — folds translateX(-50%) into every
+   keyframe since that's how both otter classes stay centered on their
+   position, and an animation's transform replaces rather than composes with
+   the base rule's. */
+@keyframes otter-walk{
+  0%,100%{transform:translateX(-50%) translateY(0) rotate(0deg);}
+  25%{transform:translateX(-50%) translateY(-4px) rotate(-6deg);}
+  50%{transform:translateX(-50%) translateY(0) rotate(0deg);}
+  75%{transform:translateX(-50%) translateY(-4px) rotate(6deg);}
+}
+@media (prefers-reduced-motion: reduce){
+  .trail-otter,.race-lane-otter{animation:none;}
+}
 .race-lane-finish{position:absolute;right:8px;top:4px;bottom:4px;width:3px;z-index:1;
   background:repeating-linear-gradient(180deg,#fff 0 6px,rgba(31,42,31,0.4) 6px 12px);}
 .race-value{font-size:10px;color:var(--ink-soft);margin-top:2px;}
@@ -1849,12 +1863,13 @@ const App = {
     opts = opts || {};
     if(!entries.length) return `<div class="empty">No one in this race yet.</div>`;
     const max = opts.max || Math.max(1, ...entries.map(e=>e.value));
-    return entries.map(e => {
+    return entries.map((e, i) => {
       const pct = Math.min(100, Math.max(2, (e.value/max)*100));
+      const delay = (i % 5) * 0.11;
       return `<div class="race-row">
         <div class="race-name">${e.name}${opts.unit ? `<div class="race-value">${e.value.toLocaleString()} ${opts.unit}</div>` : ''}</div>
         <div class="race-lane-track">
-          <img class="race-lane-otter" src="${otterSrc}" alt="" style="left:${pct.toFixed(1)}%">
+          <img class="race-lane-otter" src="${otterSrc}" alt="" style="left:${pct.toFixed(1)}%;animation-delay:${delay.toFixed(2)}s">
           <div class="race-lane-finish"></div>
         </div>
       </div>`;
