@@ -809,6 +809,26 @@ const App = {
     }
     this.render();
   },
+  // Self-service joining — the safety net for anyone left without a team (a
+  // roster sync unassigns rather than deletes, and a captain can remove a
+  // member) so they're not stuck waiting on an admin. Not the same as the
+  // old team-creation/browser flow that was removed: this only lets someone
+  // join a team an admin/roster-sync already created, never create a new one.
+  async joinTeam(teamId){
+    const MAX_TEAM_SIZE = 5;
+    const uid = this.state.identity.uid;
+    const team = this.state.teams[teamId];
+    if(!team) return;
+    if(team.members.includes(uid)) return;
+    if(team.members.length >= MAX_TEAM_SIZE){ alert(`${team.name} is already full.`); return; }
+    if(!confirm(`Join ${team.name}?`)) return;
+    const members = [...team.members, uid];
+    await updateDoc(doc(db,'teams',teamId), { members });
+    team.members = members;
+    await updateDoc(doc(db,'users',uid), { teamId });
+    this.state.users[uid].teamId = teamId;
+    this.render();
+  },
 
   // ---------- Bonus challenges ----------
   async addBonusChallenge(){
@@ -1149,6 +1169,13 @@ const App = {
     try{
       const { parsedTeams, skipped } = this.parseRosterRows(text);
 
+      // Refresh from Firestore first — otherwise this runs against whatever
+      // was cached in the browser since the admin tab was last loaded, which
+      // can be stale (e.g. a team deleted or changed in a previous sync this
+      // same page-load, or by another admin tab).
+      await this.loadUsers();
+      await this.loadTeams();
+
       const beforeUsers = Object.values(this.state.users);
       const keepEmails = new Set();
       const credentials = [];
@@ -1185,9 +1212,12 @@ const App = {
         const teamRef = doc(db,'teams',teamId);
         if(!members.length){
           // firestore.rules only allows deleting a team once its STORED
-          // members array is already empty, so clear it first.
-          await updateDoc(teamRef, { members: [] }).catch(()=>{});
-          await deleteDoc(teamRef).catch(()=>{});
+          // members array is already empty, so clear it first. Errors here
+          // are NOT swallowed — a stale team that fails to delete should
+          // show up in the sync result, not vanish silently.
+          try{ await updateDoc(teamRef, { members: [] }); }
+          catch(e){ if(e.code !== 'not-found') throw e; }
+          await deleteDoc(teamRef);
           continue;
         }
         const rowMatch = parsedTeams.find(t => t.teamId === teamId);
@@ -1581,9 +1611,35 @@ const App = {
     if(!this.state.allStepsLoaded) return `<div class="panel"><div class="loading">Loading team info…</div></div>`;
     const team = this.getMyTeam();
     if(!team){
-      return `<div class="panel"><div class="empty">You haven't been assigned to a team yet. Ask your admin to add you to one.</div></div>`;
+      return this.renderTeamBrowser();
     }
     return this.renderTeamRoster(team);
+  },
+  // Shown when someone has no team — whether they've never been assigned
+  // one, a roster sync unassigned them (their profile/history are kept, not
+  // deleted, so they land here instead of being locked out), or a captain
+  // removed them. Lets them join an existing team themselves rather than
+  // wait on an admin; doesn't let them create a new team (that stays
+  // admin/roster-sync-only, so team names/rosters stay authoritative).
+  renderTeamBrowser(){
+    const MAX_TEAM_SIZE = 5;
+    const teams = Object.values(this.state.teams).sort((a,b) => a.name.localeCompare(b.name));
+    let html = `<div class="panel"><div class="empty">You're not on a team right now. Join one below, or ask your admin to add you to a specific one.</div></div>`;
+    if(!teams.length){
+      html += `<div class="panel"><div class="empty">No teams exist yet.</div></div>`;
+      return html;
+    }
+    html += `<div class="panel"><h3>Available teams</h3>`;
+    teams.forEach(t => {
+      const size = (t.members || []).length;
+      const full = size >= MAX_TEAM_SIZE;
+      html += `<div class="member-row">
+        <div>${t.name} <span style="color:var(--ink-soft);font-size:12px;">(${size}/${MAX_TEAM_SIZE})</span></div>
+        <button class="btn btn-sm" data-role="join-team" data-teamid="${t.id}" ${full ? 'disabled' : ''}>${full ? 'Full' : 'Join'}</button>
+      </div>`;
+    });
+    html += `</div>`;
+    return html;
   },
 
   renderTeamRoster(team){
@@ -2101,6 +2157,7 @@ const App = {
     });
 
     root.querySelectorAll('[data-role="remove-member"]').forEach(el => el.addEventListener('click', () => this.removeMember(el.dataset.teamid, el.dataset.uid)));
+    root.querySelectorAll('[data-role="join-team"]').forEach(el => el.addEventListener('click', () => this.joinTeam(el.dataset.teamid)));
     const leaveBtn = root.querySelector('[data-role="leave-team"]');
     if(leaveBtn) leaveBtn.addEventListener('click', () => this.leaveTeam());
 
