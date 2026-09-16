@@ -1041,9 +1041,21 @@ const App = {
       uid = cred.user.uid;
     }catch(e){
       if(e.code === 'auth/email-already-in-use'){
-        throw new Error(`"${username}" already has a login, but no profile was found for them — ask an admin to check this account manually.`);
+        // A login exists but its profile is missing — most likely a previous
+        // add attempt created the account but failed to write the profile
+        // (e.g. before firestore.rules allowed it). Since that means it was
+        // never signed into and never went through the forced-password-change
+        // flow, its password is still the default (same as the username) —
+        // sign in as it just to recover its uid, then attach the profile.
+        try{
+          const cred = await signInWithEmailAndPassword(provisioningAuth, email, username);
+          uid = cred.user.uid;
+        }catch(e2){
+          throw new Error(`"${username}" already has a login with a password that's since changed, but no profile — ask an admin to check this account manually (see scripts/README.md).`);
+        }
+      } else {
+        throw e;
       }
-      throw e;
     }finally{
       await signOut(provisioningAuth).catch(()=>{});
     }
