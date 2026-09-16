@@ -1183,7 +1183,13 @@ const App = {
       for(const teamId of allTeamIds){
         const members = byTeam[teamId] || [];
         const teamRef = doc(db,'teams',teamId);
-        if(!members.length){ await deleteDoc(teamRef).catch(()=>{}); continue; }
+        if(!members.length){
+          // firestore.rules only allows deleting a team once its STORED
+          // members array is already empty, so clear it first.
+          await updateDoc(teamRef, { members: [] }).catch(()=>{});
+          await deleteDoc(teamRef).catch(()=>{});
+          continue;
+        }
         const rowMatch = parsedTeams.find(t => t.teamId === teamId);
         const teamName = rowMatch?.teamName || this.state.teams[teamId]?.name || teamId;
         const captainUid = (captainUidByTeam[teamId] && members.some(m => m.uid === captainUidByTeam[teamId]))
