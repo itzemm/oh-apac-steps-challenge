@@ -6,28 +6,9 @@ services:
     staticPublishPath: .
     pullRequestPreviewsEnabled: false
 
-  # Holds two secrets server-side — the static site above never sees either:
-  # the Gemini API key (admin "AI photo audit"), and the Firebase Admin SDK
-  # service account (admin add/delete/bulk-import participants — full
-  # read/write/delete over the whole Firebase project). Both are
-  # intentionally left unset here (sync: false): set them in the Render
-  # dashboard for this service after it's created, not in this file.
-  # FIREBASE_SERVICE_ACCOUNT_KEY is the *entire contents* of the
-  # service-account JSON file (Firebase Console → Project Settings → Service
-  # Accounts → Generate new private key), pasted as one env var value.
-  - type: web
-    name: oh-apac-steps-audit
-    runtime: node
-    rootDir: audit-proxy
-    buildCommand: npm install
-    startCommand: npm start
-    envVars:
-      - key: GEMINI_API_KEY
-        sync: false
-      - key: FIREBASE_SERVICE_ACCOUNT_KEY
-        sync: false
-      - key: FIREBASE_PROJECT_ID
-        value: oh-apac-steps-challenge
-      - key: ALLOWED_ORIGINS
-        value: https://itzemm.github.io,https://oh-apac-steps-challenge.onrender.com
-    pullRequestPreviewsEnabled: false
+# The Gemini API key and Firebase Admin SDK access used to live in a second
+# Node service here (oh-apac-steps-audit). That's been retired in favor of
+# Cloud Functions (see /functions) — same "never let the browser see these
+# secrets" job, but running inside the Firebase project instead of a
+# separately-billed Render service. Deploy those with:
+#   npx firebase-tools deploy --only functions

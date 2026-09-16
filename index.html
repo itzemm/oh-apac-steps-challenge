@@ -256,6 +256,9 @@ import {
 import {
   getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
+import {
+  getFunctions, httpsCallable
+} from "https://www.gstatic.com/firebasejs/10.13.2/firebase-functions.js";
 
 // ---------- Firebase setup ----------
 const firebaseConfig = {
@@ -269,6 +272,7 @@ const firebaseConfig = {
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
 const db = getFirestore(fbApp);
+const functions = getFunctions(fbApp);
 
 // Accounts are provisioned entirely by the admin (see /scripts) — there is no
 // self-service sign-up. A "username" like trail-blazers_alice-tan is really
@@ -279,13 +283,15 @@ function usernameToEmail(username){
   return username.trim().toLowerCase().replace(/\s+/g, '_') + USERNAME_EMAIL_DOMAIN;
 }
 
-// Small server-side proxy (see /audit-proxy in this repo) that holds two
-// secrets the browser must never see: the Gemini API key, and the Firebase
-// Admin SDK service account used for participant management. The proxy
-// verifies the caller's Firebase ID token before doing anything, and the
-// /api/admin/* routes additionally require role:'admin' in Firestore.
-const PROXY_BASE_URL = 'https://oh-apac-steps-audit.onrender.com';
-const AUDIT_PROXY_URL = PROXY_BASE_URL + '/api/audit';
+// Cloud Functions (see /functions in this repo) hold two things the browser
+// must never see directly: the Gemini API key, and Firebase Admin SDK access
+// used for participant management. Callable functions verify the caller's
+// Firebase ID token automatically, and the admin ones additionally require
+// role:'admin' in Firestore.
+const auditPhotoFn = httpsCallable(functions, 'auditPhoto');
+const addParticipantFn = httpsCallable(functions, 'addParticipant');
+const deleteParticipantFn = httpsCallable(functions, 'deleteParticipant');
+const importRosterFn = httpsCallable(functions, 'importRoster');
 
 // A reviewed week's status: 'verified' | 'rejected' | 'needs_review', or no
 // entry at all for "pending" (not reviewed yet). Colors follow Excel's
@@ -1007,27 +1013,16 @@ const App = {
     this.render();
   },
   // ---------- Participant management (admin) ----------
-  // These call /api/admin/* on the proxy server, which holds the Firebase
-  // Admin SDK service account — the only place account creation/deletion can
-  // happen, gated to callers whose Firestore profile has role:'admin'.
-  async callProxyAdmin(path, body){
-    const idToken = await auth.currentUser.getIdToken();
-    const res = await fetch(PROXY_BASE_URL + path, {
-      method:'POST',
-      headers: { 'Content-Type':'application/json', 'Authorization':'Bearer ' + idToken },
-      body: JSON.stringify(body)
-    });
-    const data = await res.json();
-    if(!res.ok) throw new Error(data.error || 'Request failed.');
-    return data;
-  },
+  // These call the Cloud Functions in /functions, which hold Firebase Admin
+  // SDK access — the only place account creation/deletion can happen, gated
+  // to callers whose Firestore profile has role:'admin'.
   async addParticipant(teamName, personName, captain){
     teamName = teamName.trim();
     personName = personName.trim();
     if(!teamName || !personName){ alert('Enter both a team name and a person name.'); return; }
     this.state.participantActionMsg = null;
     try{
-      const result = await this.callProxyAdmin('/api/admin/add-participant', { teamName, personName, captain });
+      const { data: result } = await addParticipantFn({ teamName, personName, captain });
       this.state.participantActionMsg = { type:'success', text: result.password
         ? `${result.message} Username: ${result.username} — initial password: ${result.password}`
         : `${result.message} (account already existed — password left unchanged)` };
@@ -1046,7 +1041,7 @@ const App = {
     const username = (u.email || '').split('@')[0];
     if(!username){ alert("Could not determine this account's username."); return; }
     try{
-      const result = await this.callProxyAdmin('/api/admin/delete-participant', { username });
+      const { data: result } = await deleteParticipantFn({ username });
       delete this.state.users[uid];
       delete this.state.allSteps[uid];
       this.state.participantActionMsg = { type:'success', text: result.message };
@@ -1063,7 +1058,7 @@ const App = {
     this.render();
     try{
       const csvText = await file.text();
-      const result = await this.callProxyAdmin('/api/admin/import-roster', { csvText });
+      const { data: result } = await importRosterFn({ csvText });
       this.state.rosterImportResult = result;
       await this.loadUsers();
       await this.loadTeams();
@@ -1137,14 +1132,7 @@ const App = {
       }
       const prompt = `You are auditing a workplace step-count challenge. A participant uploaded this photo as proof for the week of ${claims[0].date} to ${claims[6].date}. They separately logged these daily step counts themselves: ${JSON.stringify(claims)}. Look closely at the photo (it's likely a phone health app or pedometer screenshot) and identify any step counts and dates it actually shows. Compare what you see against what they logged. Respond with ONLY JSON in this exact shape, no other text: {"summary": "one sentence overview", "flags": [{"date": "YYYY-MM-DD", "claimedSteps": number or null, "seenInPhoto": number or null, "issue": "short description of the mismatch, or an empty string if that date matches or the photo doesn't cover it"}]}. Include one entry in "flags" for every date listed above.`;
 
-      const idToken = await auth.currentUser.getIdToken();
-      const res = await fetch(AUDIT_PROXY_URL, {
-        method: 'POST',
-        headers: { 'Content-Type':'application/json', 'Authorization':'Bearer ' + idToken },
-        body: JSON.stringify({ imageBase64, mimeType, prompt })
-      });
-      const data = await res.json();
-      if(!res.ok) throw new Error(data.error || 'Audit request failed.');
+      const { data } = await auditPhotoFn({ imageBase64, mimeType, prompt });
       let parsed;
       try{ parsed = JSON.parse(data.raw); }
       catch(e){ throw new Error("Couldn't parse the AI's response."); }
