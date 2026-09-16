@@ -912,6 +912,44 @@ const App = {
     this.state.participantActionMsg = { type:'success', text: `Cleared ${toWipe.length} participant(s) and all teams.` };
     this.render();
   },
+  // Recovery for when a team doc got deleted out from under a still-intact
+  // set of user profiles (e.g. accidentally deleted straight from the
+  // Firebase Console, which bypasses this app — and firestore.rules —
+  // entirely, so nothing here could have prevented it). Each surviving
+  // profile still carries its teamId, so teams can be reconstructed by
+  // grouping on that — but the team's exact display name and who was
+  // captain were only ever stored on the team doc itself, so both are lost:
+  // the name is approximated from the teamId slug, and the first member
+  // found is arbitrarily made captain. Never overwrites a team that already
+  // has a doc, so it's safe to click repeatedly.
+  orphanedTeamIds(){
+    const byTeam = {};
+    Object.values(this.state.users).forEach(u => {
+      if(u.role !== 'admin' && u.teamId && !this.state.teams[u.teamId]){
+        (byTeam[u.teamId] = byTeam[u.teamId] || []).push(u);
+      }
+    });
+    return byTeam;
+  },
+  async rebuildTeamsFromProfiles(){
+    if(!this.isPrestart()){ alert('The challenge has started — team details are locked.'); return; }
+    const orphaned = this.orphanedTeamIds();
+    const count = Object.keys(orphaned).length;
+    if(!count){ alert('Nothing to rebuild — every team referenced by a participant already has a team doc.'); return; }
+    if(!confirm(`Rebuild ${count} team(s) from participant profiles? Team names will be a best guess from the team ID, and captains will be picked arbitrarily — check and fix both afterward. Continue?`)) return;
+    let rebuilt = 0;
+    for(const [teamId, members] of Object.entries(orphaned)){
+      const guessedName = teamId.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+      await setDoc(doc(db,'teams',teamId), {
+        id: teamId, name: guessedName, captainUid: members[0].uid,
+        members: members.map(m => m.uid), createdAt: new Date().toISOString()
+      });
+      rebuilt++;
+    }
+    await this.loadTeams();
+    this.state.participantActionMsg = { type:'success', text: `Rebuilt ${rebuilt} team(s). Double-check team names and captains in the Participants table below — both are best guesses.` };
+    this.render();
+  },
 
   // ---------- Bonus challenges ----------
   async addBonusChallenge(){
@@ -2011,7 +2049,19 @@ const App = {
     }
     const f = this.state.participantForm;
     const msg = this.state.participantActionMsg;
-    let html = `<div class="panel">
+    let html = '';
+
+    const orphanedCount = Object.keys(this.orphanedTeamIds()).length;
+    if(orphanedCount){
+      html += `<div class="panel">
+        <h3>⚠ Recovery available</h3>
+        <div style="font-size:13px;">${orphanedCount} participant${orphanedCount===1?'':'s'} ${orphanedCount===1?'has a':'have a'} team assignment pointing at a team that no longer exists (e.g. a team got deleted directly in the Firebase Console). You can rebuild ${orphanedCount===1?'it':'them'} from the surviving profiles.</div>
+        <div style="font-size:12px;color:var(--ink-soft);margin:6px 0 10px;">Team names will be a best guess and captains picked arbitrarily — check both afterward.</div>
+        <button class="btn btn-primary btn-sm" id="btn-rebuild-teams">Rebuild ${orphanedCount} team${orphanedCount===1?'':'s'} from profiles</button>
+      </div>`;
+    }
+
+    html += `<div class="panel">
       <h3>Add a participant</h3>
       ${msg ? `<div class="notice" style="${msg.type==='error' ? 'background:var(--rust-tint);color:var(--rust);' : ''}">${msg.text}</div>` : ''}
       <div class="form-inline">
@@ -2214,6 +2264,8 @@ const App = {
     if(exportProofBtn) exportProofBtn.addEventListener('click', () => this.exportProofZip());
     const clearAllBtn = document.getElementById('btn-clear-all-participants');
     if(clearAllBtn) clearAllBtn.addEventListener('click', () => this.clearAllParticipants());
+    const rebuildTeamsBtn = document.getElementById('btn-rebuild-teams');
+    if(rebuildTeamsBtn) rebuildTeamsBtn.addEventListener('click', () => this.rebuildTeamsFromProfiles());
     root.querySelectorAll('[data-role="assign-team"]').forEach(el => el.addEventListener('change', () => this.assignTeam(el.dataset.uid, el.value)));
 
     const addParticipantBtn = document.getElementById('btn-add-participant');
