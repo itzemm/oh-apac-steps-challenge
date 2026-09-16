@@ -28,10 +28,11 @@ There's no self-service sign-up. Two ways to create accounts:
 
 **From the Admin tab (day-to-day use)** — once you're signed in as an admin, the Admin tab has:
 - **Add a participant** — team name + person name (+ optional "make captain") → creates their account and shows you the username/initial password once. Runs entirely in the browser: it creates the Firebase Auth account on a second, throwaway app instance (so your own admin session is never touched — see `ensureUserClient()` in `index.html`), then writes their profile/team doc while you're still signed in as the admin. `firestore.rules`' `isAdmin()` check is what actually stops a non-admin from doing this, not anything about where the code runs.
-- **Bulk import a roster** — upload a CSV (`Team Name, Captain, Member 1-4` columns; see `scripts/roster.example.csv`) → creates everyone at once (same client-side mechanism as above) and gives you a CSV of usernames/initial passwords to download.
-- **Delete…** button on each row in the Participants table — Firebase deliberately has no client-side way to delete *another* user's Auth account (only the Admin SDK can, or a user deleting themselves), so this can't run from a webpage no matter how it's hosted. Clicking it copies the equivalent `scripts/delete-participant.js` command to your clipboard and shows you the one-line terminal command to finish the deletion from your own machine.
+- **Sync the full roster** — upload a CSV, or paste the list straight into the textbox, in this exact column order (no header row needed): `Team Name, Captain, Member 2, Member 3, Member 4, Member 5` (see `scripts/roster.example.csv`). This is a **full replace, not an addition**: every sync treats the list as the complete, current roster for the whole event. Anyone it creates gets an account the same way "Add a participant" does; anyone previously registered who's *missing* from this particular upload gets unassigned from their team (their profile and step history are kept, not deleted, in case they were left off by mistake or come back on a later upload). Admin accounts are never touched by a sync, no matter what's in the CSV. Meant to be run repeatedly while you're finalizing the roster before the challenge starts — once it's launched, you likely won't need this again.
 
-**From your own machine (the two things that have to start here)** — creating your *first* admin account is a chicken-and-egg problem (the in-app add tool above needs you to already be signed in as an admin), and deleting a participant needs the Admin SDK (see above), so those two still run locally:
+There's no "delete a participant" button — Firebase deliberately has no client-side way to delete *another* user's Auth account (only the Admin SDK can, or a user deleting themselves), so that can't run from a webpage no matter how it's hosted. In practice you shouldn't need it: fix the master list and re-sync instead, which is what unassigns anyone who no longer belongs. If you genuinely need to delete a login outright (not just unassign it), `scripts/delete-participant.js` is still there for that one case.
+
+**From your own machine (the one thing that has to start here)** — creating your *first* admin account is a chicken-and-egg problem (the in-app tools above need you to already be signed in as an admin), so that one step still runs locally:
 
 ```bash
 cd scripts
@@ -40,7 +41,8 @@ npm run setup-admin   # creates username admin_emily, role admin
 ```
 
 Full details, including the CLI equivalents of add/import (useful as a
-fallback, or for scripting) and `delete-participant.js`, are in
+fallback, or for scripting) and `delete-participant.js` (for the rare case
+you need to actually remove a login, not just unassign it), are in
 **`scripts/README.md`**. Every created account's initial password is the
 same string as its username; the app forces a password change on first
 sign-in. `setup-admin` is also how you add *more* admins later — "the admin

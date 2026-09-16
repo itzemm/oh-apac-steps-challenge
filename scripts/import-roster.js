@@ -3,11 +3,15 @@
 // Firebase Auth account (username + a temporary password equal to the
 // username) and the matching Firestore users/{uid} + teams/{teamId} docs,
 // fully assigned — no further signup step needed. Safe to re-run: existing
-// accounts/profiles/teams are left alone or merged, never duplicated.
+// accounts/profiles/teams are left alone or merged, never duplicated. Note
+// this script only ever adds/merges — it doesn't unassign people missing
+// from the CSV the way the Admin tab's "Sync the full roster" does.
 //
 // Usage: node import-roster.js roster.csv
-// CSV columns (header row required): Team Name, Captain, Member 1, Member 2,
-// Member 3, Member 4 — blank cells for a team with fewer than 5 people.
+// CSV columns, in this exact order (no header row needed — one is tolerated
+// and skipped if the first cell is literally "Team Name"): Team Name,
+// Captain, Member 2, Member 3, Member 4, Member 5 — blank cells for a team
+// with fewer than 5 people.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -33,27 +37,17 @@ async function main() {
 
   const { auth, db } = initAdmin();
   const rows = parseCsv(fs.readFileSync(path.resolve(csvPath), 'utf8'));
-  const header = rows[0].map(h => h.toLowerCase());
-  const col = name => header.indexOf(name);
-  const idx = {
-    team: col('team name'),
-    captain: col('captain'),
-    m1: col('member 1'), m2: col('member 2'), m3: col('member 3'), m4: col('member 4')
-  };
-  if (idx.team === -1 || idx.captain === -1) {
-    console.error('CSV must have "Team Name" and "Captain" columns (Member 1-4 optional).');
-    process.exit(1);
-  }
+  const dataRows = (rows[0][0] || '').toLowerCase() === 'team name' ? rows.slice(1) : rows;
 
   const credentials = [];
   let skipped = 0;
 
-  for (const cells of rows.slice(1)) {
-    const teamName = cells[idx.team];
+  for (const cells of dataRows) {
+    const teamName = (cells[0] || '').trim();
     if (!teamName) continue;
-    const memberNames = [idx.captain, idx.m1, idx.m2, idx.m3, idx.m4]
-      .map(i => (i > -1 ? cells[i] : ''))
-      .filter(n => n && n.trim());
+    const memberNames = [cells[1], cells[2], cells[3], cells[4], cells[5]]
+      .map(c => (c || '').trim())
+      .filter(Boolean);
 
     if (!memberNames.length) { console.warn(`Skipping "${teamName}": no captain given.`); skipped++; continue; }
     if (memberNames.length > MAX_TEAM_SIZE) {

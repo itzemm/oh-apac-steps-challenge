@@ -1109,72 +1109,97 @@ const App = {
     }
     this.render();
   },
-  deleteParticipant(uid){
-    const u = this.state.users[uid];
-    if(!u) return;
-    const username = (u.email || '').split('@')[0];
-    if(!username){ alert("Could not determine this account's username."); return; }
-    // Firebase deliberately has no client-side way to delete another user's
-    // Auth account — only the Admin SDK can, so this has to run from a
-    // computer, not the webpage. See scripts/delete-participant.js.
-    const cmd = `node delete-participant.js "${username}" --yes`;
-    navigator.clipboard?.writeText(cmd).catch(()=>{});
-    alert(`Deleting a login can't be done from a webpage — Firebase only allows that from a trusted machine.\n\nCopied to your clipboard. From this project's "scripts" folder, run:\n\n${cmd}`);
+  // Parses either a CSV file's text or a block of text pasted straight into
+  // the textarea — same fixed column order either way:
+  // Team Name, Captain, Member 2, Member 3, Member 4, Member 5. A first row
+  // that's literally a "Team Name" header (from a spreadsheet paste) is
+  // tolerated and skipped; otherwise every row is treated as data.
+  parseRosterRows(text){
+    const MAX_TEAM_SIZE = 5;
+    const rows = text.split(/\r?\n/).map(l => l.trim()).filter(l => l !== '').map(l => l.split(',').map(c => c.trim()));
+    if(!rows.length) throw new Error('Nothing to sync — provide a CSV file or paste the list.');
+    const dataRows = (rows[0][0] || '').toLowerCase() === 'team name' ? rows.slice(1) : rows;
+
+    const parsedTeams = [];
+    const skipped = [];
+    for(const cells of dataRows){
+      const teamName = (cells[0] || '').trim();
+      if(!teamName) continue;
+      const memberNames = [cells[1], cells[2], cells[3], cells[4], cells[5]].map(c => (c || '').trim()).filter(Boolean);
+      if(!memberNames.length){ skipped.push(`${teamName}: no captain given.`); continue; }
+      if(memberNames.length > MAX_TEAM_SIZE){ skipped.push(`${teamName}: ${memberNames.length} people listed, max is ${MAX_TEAM_SIZE}.`); continue; }
+      parsedTeams.push({ teamName, teamId: this.slugTeamId(teamName), captainName: memberNames[0], memberNames });
+    }
+    if(!parsedTeams.length) throw new Error('No valid rows found. Columns: Team Name, Captain, Member 2, Member 3, Member 4, Member 5.');
+    return { parsedTeams, skipped };
   },
-  async importRosterCsv(file){
-    if(!file) return;
+  // The uploaded list becomes the single source of truth for the whole
+  // event: every account it names gets created/kept, and it fully replaces
+  // every team's membership. Anyone previously registered who isn't in THIS
+  // upload gets unassigned from their team (not deleted) — their profile and
+  // step history stay intact in case they were left off by mistake or come
+  // back in a later upload; the "Delete…" workflow this replaces required a
+  // computer anyway (Firebase blocks deleting another user's login from a
+  // webpage, full stop — see scripts/delete-participant.js for that one
+  // remaining edge case).
+  async syncRoster(text){
     this.state.rosterImportBusy = true;
     this.state.rosterImportResult = null;
     this.render();
-    const MAX_TEAM_SIZE = 5;
     try{
-      const csvText = await file.text();
-      const rows = csvText.split(/\r?\n/).filter(l => l.trim() !== '').map(l => l.split(',').map(c => c.trim()));
-      if(!rows.length) throw new Error('CSV is empty.');
-      const header = rows[0].map(h => h.toLowerCase());
-      const col = name => header.indexOf(name);
-      const idx = { team: col('team name'), captain: col('captain'), m1: col('member 1'), m2: col('member 2'), m3: col('member 3'), m4: col('member 4') };
-      if(idx.team === -1 || idx.captain === -1){
-        throw new Error('CSV must have "Team Name" and "Captain" columns (Member 1-4 optional).');
-      }
+      const { parsedTeams, skipped } = this.parseRosterRows(text);
 
+      const beforeUsers = Object.values(this.state.users);
+      const keepEmails = new Set();
       const credentials = [];
-      const skipped = [];
+      const captainUidByTeam = {};
 
-      for(const cells of rows.slice(1)){
-        const teamName = cells[idx.team];
-        if(!teamName) continue;
-        const memberNames = [idx.captain, idx.m1, idx.m2, idx.m3, idx.m4]
-          .map(i => (i > -1 ? cells[i] : ''))
-          .filter(n => n && n.trim());
-
-        if(!memberNames.length){ skipped.push(`${teamName}: no captain given.`); continue; }
-        if(memberNames.length > MAX_TEAM_SIZE){ skipped.push(`${teamName}: ${memberNames.length} people listed, max is ${MAX_TEAM_SIZE}.`); continue; }
-
-        const teamId = this.slugTeamId(teamName);
-        const teamRef = doc(db,'teams',teamId);
-        const uids = [];
-
+      for(const { teamName, teamId, captainName, memberNames } of parsedTeams){
         for(const personName of memberNames){
           const username = `${teamName}_${personName}`.trim().replace(/\s+/g, '_');
+          keepEmails.add(usernameToEmail(username));
           const { uid, created } = await this.ensureUserClient(personName, username, teamId, 'user');
-          uids.push(uid);
-          if(created) credentials.push({ team:teamName, name:personName, username, password:username });
-        }
-
-        const existingTeam = await getDoc(teamRef);
-        if(!existingTeam.exists()){
-          await setDoc(teamRef, { id:teamId, name:teamName, captainUid:uids[0], members:uids, createdAt:new Date().toISOString() });
-        } else {
-          const merged = Array.from(new Set([...(existingTeam.data().members || []), ...uids]));
-          await updateDoc(teamRef, { members: merged });
+          if(personName === captainName) captainUidByTeam[teamId] = uid;
+          if(created) credentials.push({ team: teamName, name: personName, username, password: username });
         }
       }
 
+      const unassigned = [];
+      for(const u of beforeUsers){
+        if(u.role === 'admin' || keepEmails.has(u.email) || !u.teamId) continue;
+        await updateDoc(doc(db,'users',u.uid), { teamId: null });
+        unassigned.push(u.name || u.email);
+      }
+
+      // Rebuild every team doc from scratch off final teamId assignments, so
+      // stale members (reassigned or just-unassigned people) never linger in
+      // a team's `members` array.
+      await this.loadUsers();
+      const byTeam = {};
+      Object.values(this.state.users).forEach(u => {
+        if(u.role !== 'admin' && u.teamId) (byTeam[u.teamId] = byTeam[u.teamId] || []).push(u);
+      });
+      const allTeamIds = new Set([...Object.keys(byTeam), ...Object.keys(this.state.teams)]);
+      for(const teamId of allTeamIds){
+        const members = byTeam[teamId] || [];
+        const teamRef = doc(db,'teams',teamId);
+        if(!members.length){ await deleteDoc(teamRef).catch(()=>{}); continue; }
+        const rowMatch = parsedTeams.find(t => t.teamId === teamId);
+        const teamName = rowMatch?.teamName || this.state.teams[teamId]?.name || teamId;
+        const captainUid = (captainUidByTeam[teamId] && members.some(m => m.uid === captainUidByTeam[teamId]))
+          ? captainUidByTeam[teamId] : members[0].uid;
+        await setDoc(teamRef, {
+          id: teamId, name: teamName, captainUid,
+          members: members.map(m => m.uid),
+          createdAt: this.state.teams[teamId]?.createdAt || new Date().toISOString()
+        });
+      }
+
+      await this.loadUsers();
       await this.loadTeams();
-      this.state.rosterImportResult = { credentials, skipped };
+      this.state.rosterImportResult = { credentials, skipped, unassigned };
     }catch(e){
-      this.state.rosterImportResult = { error: e.message || 'Import failed.' };
+      this.state.rosterImportResult = { error: e.message || 'Sync failed.' };
     }
     this.state.rosterImportBusy = false;
     this.render();
@@ -1781,7 +1806,6 @@ const App = {
         html += `<td style="white-space:nowrap;">
           <button class="btn btn-sm" data-role="view-user" data-uid="${u.uid}">View</button>
           <button class="btn btn-sm" data-role="toggle-role" data-uid="${u.uid}" data-newrole="${u.role==='admin'?'user':'admin'}">${u.role==='admin'?'Demote':'Promote'}</button>
-          <button class="btn btn-sm btn-danger" data-role="delete-participant" data-uid="${u.uid}" title="Copies the terminal command — deleting a login has to run from a computer, Firebase blocks it from a webpage">Delete…</button>
         </td>`;
         html += `</tr>`;
       });
@@ -1844,18 +1868,24 @@ const App = {
     </div>`;
 
     html += `<div class="panel">
-      <h3>Bulk import a roster</h3>
-      <div style="font-size:12px;color:var(--ink-soft);margin-bottom:10px;">CSV columns: <code>Team Name, Captain, Member 1, Member 2, Member 3, Member 4</code> (leave later member columns blank for smaller teams). <a href="scripts/roster.example.csv" target="_blank" rel="noopener">See an example</a>.</div>
-      <input type="file" accept=".csv,text/csv" id="in-roster-file" ${this.state.rosterImportBusy ? 'disabled' : ''}>
-      ${this.state.rosterImportBusy ? `<div class="loading">Importing…</div>` : ''}
+      <h3>Sync the full roster</h3>
+      <div style="font-size:12px;color:var(--ink-soft);margin-bottom:10px;">
+        Columns, in this exact order, no header needed: <code>Team Name, Captain, Member 2, Member 3, Member 4, Member 5</code> (leave later columns blank for smaller teams). <a href="scripts/roster.example.csv" target="_blank" rel="noopener">See an example</a>.
+        <br><strong>This replaces the entire roster</strong> — every upload is treated as the full, current list. Anyone missing from it gets unassigned from their team (their profile and step history are kept, not deleted), in case they're re-added on a later upload.
+      </div>
+      <div class="field" style="margin-bottom:8px;"><label>Upload a CSV file</label><input type="file" accept=".csv,text/csv" id="in-roster-file" ${this.state.rosterImportBusy ? 'disabled' : ''}></div>
+      <div class="field" style="margin-bottom:8px;"><label>…or paste the list here instead</label><textarea id="in-roster-paste" rows="5" placeholder="Trail Blazers, Alice Tan, Bob Lee, , ,&#10;Wave Riders, Chris Ong, Dana Lim, Eve Koh, ," ${this.state.rosterImportBusy ? 'disabled' : ''}></textarea></div>
+      <button class="btn btn-primary" id="btn-sync-roster" ${this.state.rosterImportBusy ? 'disabled' : ''}>Sync roster</button>
+      ${this.state.rosterImportBusy ? `<div class="loading">Syncing…</div>` : ''}
     `;
     const result = this.state.rosterImportResult;
     if(result && result.error){
       html += `<div class="notice" style="background:var(--rust-tint);color:var(--rust);margin-top:10px;">${result.error}</div>`;
     } else if(result){
       html += `<div style="margin-top:10px;font-size:13px;">
-        <div>${result.credentials.length} account(s) created/updated.${result.skipped.length ? ` ${result.skipped.length} row(s) skipped.` : ''}</div>
-        ${result.skipped.length ? `<ul style="margin:6px 0;padding-left:18px;color:var(--rust);font-size:12px;">${result.skipped.map(s=>`<li>${s}</li>`).join('')}</ul>` : ''}
+        <div>${result.credentials.length} new account(s) created.${result.skipped.length ? ` ${result.skipped.length} row(s) skipped.` : ''}${result.unassigned.length ? ` ${result.unassigned.length} ${result.unassigned.length===1?'person':'people'} unassigned (not in this upload).` : ''}</div>
+        ${result.skipped.length ? `<div style="margin-top:6px;"><strong>Skipped rows:</strong><ul style="margin:4px 0;padding-left:18px;color:var(--rust);font-size:12px;">${result.skipped.map(s=>`<li>${s}</li>`).join('')}</ul></div>` : ''}
+        ${result.unassigned.length ? `<div style="margin-top:6px;"><strong>Unassigned:</strong> ${result.unassigned.join(', ')}</div>` : ''}
         ${result.credentials.length ? `<button class="btn btn-sm" id="btn-download-roster-creds" style="margin-top:6px;">Download usernames &amp; passwords (CSV)</button>` : ''}
       </div>`;
     }
@@ -2039,11 +2069,19 @@ const App = {
         this.addParticipant(this.state.participantForm.teamName, this.state.participantForm.personName, this.state.participantForm.captain);
       });
     }
-    const rosterFileInput = document.getElementById('in-roster-file');
-    if(rosterFileInput) rosterFileInput.addEventListener('change', () => this.importRosterCsv(rosterFileInput.files[0]));
+    const syncRosterBtn = document.getElementById('btn-sync-roster');
+    if(syncRosterBtn){
+      syncRosterBtn.addEventListener('click', async () => {
+        const file = document.getElementById('in-roster-file').files[0];
+        const pasted = document.getElementById('in-roster-paste').value;
+        if(!file && !pasted.trim()){ alert('Choose a CSV file or paste the list first.'); return; }
+        if(!confirm('This replaces the entire roster with what you\'re about to upload — anyone not in it will be unassigned from their team. Continue?')) return;
+        const text = file ? await file.text() : pasted;
+        this.syncRoster(text);
+      });
+    }
     const downloadCredsBtn = document.getElementById('btn-download-roster-creds');
     if(downloadCredsBtn) downloadCredsBtn.addEventListener('click', () => this.downloadRosterCredentials());
-    root.querySelectorAll('[data-role="delete-participant"]').forEach(el => el.addEventListener('click', () => this.deleteParticipant(el.dataset.uid)));
 
     root.querySelectorAll('[data-role="toggle-role"]').forEach(el => el.addEventListener('click', () => this.setRole(el.dataset.uid, el.dataset.newrole)));
     root.querySelectorAll('[data-role="view-user"]').forEach(el => el.addEventListener('click', () => this.openModal({ type:'userDetail', uid: el.dataset.uid })));
