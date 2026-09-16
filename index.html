@@ -46,8 +46,9 @@ img{max-width:100%;}
 .login-sub{color:var(--ink-soft);margin-bottom:24px;font-size:14px;}
 .field{margin-bottom:16px;}
 .field label{display:block;font-size:13px;color:var(--ink-soft);margin-bottom:6px;}
-.field input,.field select{width:100%;padding:10px 12px;border:1px solid var(--line-strong);border-radius:6px;font-size:15px;font-family:inherit;background:#fff;color:var(--ink);}
-.field input:focus,.field select:focus{outline:2px solid var(--forest);outline-offset:1px;}
+.field input,.field select,.field textarea{box-sizing:border-box;width:100%;padding:10px 12px;border:1px solid var(--line-strong);border-radius:6px;font-size:15px;font-family:inherit;background:#fff;color:var(--ink);}
+.field textarea{resize:vertical;}
+.field input:focus,.field select:focus,.field textarea:focus{outline:2px solid var(--forest);outline-offset:1px;}
 .privacy-note{font-size:12px;color:var(--ink-soft);margin-top:16px;line-height:1.5;}
 .back-link{background:none;border:none;color:var(--forest);text-decoration:underline;cursor:pointer;font-size:13px;padding:0;font-family:inherit;margin-bottom:14px;display:inline-block;}
 
@@ -467,7 +468,8 @@ const App = {
     participantForm: { teamName:'', personName:'', captain:false },
     participantActionMsg: null,
     rosterImportBusy: false,
-    rosterImportResult: null
+    rosterImportResult: null,
+    participantMissingOnly: false
   },
 
   init(){
@@ -1092,6 +1094,20 @@ const App = {
       rows.push(row);
     });
     this.downloadCSV('participants.csv', rows);
+  },
+  exportMissingProofCSV(){
+    const header = ['Name','Email','Team','Missing Steps Weeks','No-Proof Weeks','Total Issues'];
+    const rows = [header];
+    Object.values(this.state.users).forEach(u => {
+      if(u.role === 'admin') return;
+      const issues = this.missingIssues(u);
+      if(!issues.length) return;
+      const missingWeeks = issues.filter(i => i.type==='missing').map(i => i.week+1).join('; ');
+      const noProofWeeks = issues.filter(i => i.type==='no-proof').map(i => i.week+1).join('; ');
+      const teamName = u.teamId && this.state.teams[u.teamId] ? this.state.teams[u.teamId].name : '';
+      rows.push([u.name, u.email, teamName, missingWeeks, noProofWeeks, issues.length]);
+    });
+    this.downloadCSV('missing-proof.csv', rows);
   },
   exportTeamsCSV(){
     const cfg = this.state.config;
@@ -1949,12 +1965,30 @@ const App = {
 
     const status = this.getChallengeStatus();
     let users = Object.values(this.state.users).map(u => ({ u, issues: this.missingIssues(u) }));
-    users.sort((a,b) => b.issues.length - a.issues.length || a.u.name.localeCompare(b.u.name));
+    const teamNameOf = u => u.teamId ? (this.state.teams[u.teamId]?.name || u.teamId) : null;
+    users.sort((a,b) => {
+      const teamA = teamNameOf(a.u), teamB = teamNameOf(b.u);
+      if(teamA !== teamB){
+        if(teamA === null) return 1;
+        if(teamB === null) return -1;
+        return teamA.localeCompare(teamB);
+      }
+      return b.issues.length - a.issues.length || a.u.name.localeCompare(b.u.name);
+    });
+    const missingCount = users.filter(({issues}) => issues.length > 0).length;
+    if(this.state.participantMissingOnly) users = users.filter(({issues}) => issues.length > 0);
 
     const prestart = this.isPrestart();
-    html += `<div class="panel"><h3>Participants (${users.length}) <span style="font-weight:400;font-size:12px;color:var(--ink-soft);">sorted by missing proof</span></h3>`;
-    html += `<div style="margin-bottom:12px;"><button class="btn btn-sm" id="btn-export-participants">Export participants (CSV)</button> <button class="btn btn-sm" id="btn-export-teams">Export teams (CSV)</button> <button class="btn btn-sm" id="btn-random-audit">🎲 Randomly select someone to audit</button> ${prestart ? `<button class="btn btn-sm btn-danger" id="btn-clear-all-participants">Clear all participants</button>` : ''}</div>`;
     const hasStart = !!cfg.startDate;
+    html += `<div class="panel"><h3>Participants (${users.length}) <span style="font-weight:400;font-size:12px;color:var(--ink-soft);">sorted by team, then missing proof</span></h3>`;
+    html += `<div style="margin-bottom:12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+      <button class="btn btn-sm" id="btn-export-participants">Export participants (CSV)</button>
+      <button class="btn btn-sm" id="btn-export-teams">Export teams (CSV)</button>
+      ${hasStart ? `<button class="btn btn-sm" id="btn-export-missing">Export missing proof (CSV)</button>` : ''}
+      <button class="btn btn-sm" id="btn-random-audit">🎲 Randomly select someone to audit</button>
+      ${prestart ? `<button class="btn btn-sm btn-danger" id="btn-clear-all-participants">Clear all participants</button>` : ''}
+      ${hasStart ? `<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink-soft);"><input type="checkbox" id="in-missing-only" ${this.state.participantMissingOnly?'checked':''}> Show only missing proof (${missingCount})</label>` : ''}
+    </div>`;
     if(!hasStart){
       html += `<div class="notice" style="margin-bottom:10px;">Set a start date above to begin tracking weekly status — names, teams, and roles below still work regardless.</div>`;
     }
@@ -2258,6 +2292,10 @@ const App = {
     if(exportP) exportP.addEventListener('click', () => this.exportParticipantsCSV());
     const exportT = document.getElementById('btn-export-teams');
     if(exportT) exportT.addEventListener('click', () => this.exportTeamsCSV());
+    const exportM = document.getElementById('btn-export-missing');
+    if(exportM) exportM.addEventListener('click', () => this.exportMissingProofCSV());
+    const missingOnlyCheck = document.getElementById('in-missing-only');
+    if(missingOnlyCheck) missingOnlyCheck.addEventListener('change', () => { this.state.participantMissingOnly = missingOnlyCheck.checked; this.render(); });
     const randomAuditBtn = document.getElementById('btn-random-audit');
     if(randomAuditBtn) randomAuditBtn.addEventListener('click', () => this.pickRandomAudit());
     const exportProofBtn = document.getElementById('btn-export-proof');
