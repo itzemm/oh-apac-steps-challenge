@@ -220,10 +220,15 @@ table.roster td{padding:9px 8px;border-bottom:1px solid var(--line);vertical-ali
 .form-inline{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;}
 
 /* ---------- Bonus challenges ---------- */
-.challenge-card{border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin-bottom:10px;}
+.challenge-card{border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin-bottom:10px;overflow:hidden;}
 .challenge-card .ctop{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;}
+/* The title/description block flexes and wraps its own text; the points/
+   status column next to it stays a fixed size so it doesn't get shoved
+   onto its own line — and out of right-alignment — by a long description. */
+.challenge-card .ctop>div:first-child{flex:1 1 220px;min-width:0;}
+.challenge-card .ctop>div:last-child{flex:0 0 auto;margin-left:auto;}
 .challenge-card .ctitle{font-weight:500;font-size:15px;}
-.challenge-card .cdesc{font-size:13px;color:var(--ink-soft);margin-top:4px;}
+.challenge-card .cdesc{font-size:13px;color:var(--ink-soft);margin-top:4px;word-wrap:break-word;}
 .points-pill{background:var(--amber-tint);color:#7A5A11;font-size:12px;padding:3px 10px;border-radius:20px;white-space:nowrap;}
 .type-pill{background:#EEF0EA;color:var(--ink-soft);font-size:11px;padding:2px 8px;border-radius:20px;margin-left:6px;}
 .award-grid{margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;}
