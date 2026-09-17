@@ -267,7 +267,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/fireba
 import {
   getAuth, signInWithEmailAndPassword, updatePassword,
   onAuthStateChanged, signOut, createUserWithEmailAndPassword,
-  setPersistence, browserSessionPersistence
+  setPersistence, browserSessionPersistence, browserLocalPersistence
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
 import {
   getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, writeBatch
@@ -285,12 +285,6 @@ const firebaseConfig = {
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
 const db = getFirestore(fbApp);
-// Session (per-tab) persistence instead of the default local (shared-across-tabs)
-// persistence: signing out in one tab no longer signs out every other open tab
-// (each tab keeps its own independent auth state, e.g. so an admin can be
-// signed into a second account in another tab). Trade-off: closing a tab
-// signs that tab out — a fresh sign-in is needed next time it's opened.
-setPersistence(auth, browserSessionPersistence).catch(()=>{});
 
 // A second, throwaway Firebase app instance used ONLY to create new Auth
 // accounts. createUserWithEmailAndPassword() signs in as the account it just
@@ -496,7 +490,8 @@ const App = {
     participantActionMsg: null,
     rosterImportBusy: false,
     rosterImportResult: null,
-    participantMissingOnly: false
+    participantMissingOnly: false,
+    expandedParticipant: null
   },
 
   init(){
@@ -525,6 +520,13 @@ const App = {
     if(profile){
       this.state.identity = { uid: user.uid, name: profile.name, email: profile.email };
       this.state.mustChangePassword = !!profile.mustChangePassword;
+      // Admins get per-tab session persistence (signing out in one tab
+      // doesn't sign out others, so an admin can be signed into a second
+      // account in another tab) — everyone else keeps the default shared
+      // local persistence so they stay signed in like before. Safe to call
+      // after sign-in: it moves the already-authenticated session to the
+      // new storage immediately rather than only affecting future sign-ins.
+      setPersistence(auth, profile.role === 'admin' ? browserSessionPersistence : browserLocalPersistence).catch(()=>{});
       await this.enterApp();
     } else {
       // Signed in with valid credentials, but no admin-provisioned profile
@@ -861,6 +863,16 @@ const App = {
   },
   weekProofOf(record, weekIndex){
     return record && record.weekProof ? record.weekProof[weekIndex] : null;
+  },
+  // A week-scoped bonus challenge only shows to participants during its own
+  // week; an overall-scoped one always shows. Admins still see everything
+  // in the Manage & award list regardless of week, since they need to set
+  // up or review challenges outside the current week too.
+  isBonusVisibleNow(b){
+    if(b.scope !== 'week') return true;
+    const status = this.getChallengeStatus();
+    if(!status.started) return false;
+    return b.weekIndex === status.weekIndex;
   },
   // Reads a participant's precomputed total/byWeek straight off their
   // users/{uid} doc (already fetched at boot for everyone) — used by
@@ -1685,7 +1697,27 @@ const App = {
     const uids = Object.keys(this.state.users);
     if(!uids.length){ alert('No participants yet.'); return; }
     const uid = uids[Math.floor(Math.random()*uids.length)];
-    this.openModal({ type:'userDetail', uid });
+    this.openParticipantDetail(uid);
+    // Give the row a moment to render (and its proof photos to start
+    // loading) before scrolling to it — it could be anywhere in a long,
+    // sorted Participants table.
+    setTimeout(() => {
+      const row = document.querySelector(`tr[data-uid="${uid}"]`);
+      if(row) row.scrollIntoView({ block:'center', behavior:'smooth' });
+    }, 0);
+  },
+  // Expands a person's per-week proof/steps detail inline in the
+  // Participants table, right below their row — replaces the old separate
+  // popup so their photos sit next to their own step counts instead of in
+  // a disconnected overlay.
+  openParticipantDetail(uid){
+    this.state.expandedParticipant = uid;
+    this.render();
+    this.loadProofsFor(uid).then(() => this.render());
+  },
+  toggleParticipantDetail(uid){
+    if(this.state.expandedParticipant === uid){ this.state.expandedParticipant = null; this.render(); return; }
+    this.openParticipantDetail(uid);
   },
   // status is 'verified' | 'rejected' | 'needs_review', or null to clear the
   // review back to pending.
@@ -1757,10 +1789,6 @@ const App = {
   openModal(modal){
     this.state.modal = modal;
     this.render();
-    // Photos for one person, fetched only now that an admin is actually
-    // looking at them — not bundled into the bulk `steps` fetch this modal's
-    // other data (day-by-day counts, review status) already had loaded.
-    if(modal.type === 'userDetail') this.loadProofsFor(modal.uid).then(() => this.render());
   },
   closeModal(){ this.state.modal = null; this.render(); },
 
@@ -1896,7 +1924,7 @@ const App = {
     const funHtml = this.renderFunStats(this.getFunFacts('my', myTotal));
 
     const myTeam = this.getMyTeam();
-    const bonusList = Object.values(this.state.bonus).filter(b => b.active !== false);
+    const bonusList = Object.values(this.state.bonus).filter(b => b.active !== false && this.isBonusVisibleNow(b));
     let bonusHtml = '';
     if(bonusList.length){
       bonusHtml = `<div class="panel"><h3>Bonus challenges available</h3>` + bonusList.map(b => {
@@ -2120,7 +2148,7 @@ const App = {
       </div>`;
     }).join('');
 
-    const bonusList = Object.values(this.state.bonus).filter(b => b.type==='team' && b.active !== false);
+    const bonusList = Object.values(this.state.bonus).filter(b => b.type==='team' && b.active !== false && this.isBonusVisibleNow(b));
     let bonusHtml = '';
     if(bonusList.length){
       bonusHtml = `<div class="panel"><h3>Bonus challenges for your team</h3>` + bonusList.map(b => this.renderBonusCard(b, team.id, null)).join('') + `</div>`;
@@ -2313,7 +2341,7 @@ const App = {
             ${teamOptions.map(t => `<option value="${t.id}" ${u.teamId===t.id?'selected':''}>${t.name} (${(t.members||[]).length}/5)</option>`).join('')}
           </select>`
         : (u.teamId ? (this.state.teams[u.teamId]?.name || u.teamId) : '—');
-      html += `<tr><td>${u.name}</td><td>${u.email}</td><td>${teamCell}</td>`;
+      html += `<tr data-uid="${u.uid}"><td>${u.name}</td><td>${u.email}</td><td>${teamCell}</td>`;
       if(hasStart){
         for(let w=0; w<cfg.weeks; w++){
           const weekTotal = this.totalStepsInRange(rec, w);
@@ -2333,11 +2361,16 @@ const App = {
         html += `<td>${issues.length ? `<span class="tag tag-flag">⚠ ${issues.length}</span>` : ''}</td>`;
       }
       html += `<td><span class="role-pill ${u.role==='admin'?'admin':''}">${u.role}</span></td>`;
+      const expanded = this.state.expandedParticipant === u.uid;
       html += `<td style="white-space:nowrap;">
-        <button class="btn btn-sm" data-role="view-user" data-uid="${u.uid}">View</button>
+        <button class="btn btn-sm" data-role="view-user" data-uid="${u.uid}">${expanded ? 'Hide' : 'View'}</button>
         <button class="btn btn-sm" data-role="toggle-role" data-uid="${u.uid}" data-newrole="${u.role==='admin'?'user':'admin'}">${u.role==='admin'?'Demote':'Promote'}</button>
       </td>`;
       html += `</tr>`;
+      if(expanded){
+        const colCount = 3 + (hasStart ? cfg.weeks+2 : 0) + 2;
+        html += `<tr class="detail-row"><td colspan="${colCount}">${this.renderParticipantWeekBlocks(u.uid)}</td></tr>`;
+      }
     });
     html += `</tbody></table></div></div>`;
 
@@ -2351,6 +2384,74 @@ const App = {
     html += this.renderAdminProof();
 
     return html;
+  },
+
+  // A person's per-week proof photo + AI check + review buttons, inline in
+  // the Participants table (see the "View" button above) rather than a
+  // separate popup — so their proof sits right next to their own step
+  // counts. Photos come from viewedProofs, lazy-loaded per person by
+  // openParticipantDetail() the same way loadAllProofs()/loadProofsFor()
+  // already avoid bulk-fetching everyone's photos up front.
+  renderParticipantWeekBlocks(uid){
+    const rec = this.state.allSteps[uid] || { days:{}, hasProof:{} };
+    const proofs = this.state.viewedProofs[uid] || null;
+    const cfg = this.state.config;
+
+    let weekBlocks = '';
+    for(let w=0; w<cfg.weeks; w++){
+      const weekTotal = this.totalStepsInRange(rec, w);
+      const proof = proofs ? this.weekProofOf(proofs, w) : null;
+      const review = rec.verified && rec.verified[w];
+      const reviewStatus = review ? review.status : 'pending';
+
+      let dayRows = '';
+      if(cfg.startDate){
+        for(let d=0; d<7; d++){
+          const date = this.addDays(cfg.startDate, w*7 + d);
+          const entry = rec.days[date];
+          dayRows += `<tr><td>${this.formatDate(date)}</td><td>${entry ? entry.steps.toLocaleString() : '—'}</td></tr>`;
+        }
+      }
+
+      const auditKey = uid + ':' + w;
+      const audit = this.state.auditResults[auditKey];
+      let auditHtml = '';
+      if(audit && audit.loading){
+        auditHtml = `<div class="loading" style="padding:8px 0;">Checking photo against logged steps…</div>`;
+      } else if(audit && audit.error){
+        auditHtml = `<div class="notice" style="margin:10px 0;">${audit.error}</div>`;
+      } else if(audit && audit.result){
+        const flags = (audit.result.flags || []).filter(f => f.issue);
+        auditHtml = `<div style="margin:10px 0;font-size:13px;">
+          ${audit.result.summary ? `<div style="margin-bottom:6px;color:var(--ink-soft);">${audit.result.summary}</div>` : ''}
+          ${flags.length
+            ? flags.map(f => `<div class="tag tag-flag" style="display:block;margin-bottom:4px;">⚠ ${f.date}: claimed ${f.claimedSteps ?? '—'}, photo shows ${f.seenInPhoto ?? 'unclear'} — ${f.issue}</div>`).join('')
+            : `<span class="tag tag-awarded">No mismatches found</span>`}
+        </div>`;
+      }
+
+      weekBlocks += `<div class="week-card" style="margin-top:12px;">
+        <div class="wtop">
+          <div><span class="wname">Week ${w+1}</span></div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            ${weekTotal?`<span class="steps-readout">${weekTotal.toLocaleString()} steps</span>`:''}
+            <span class="status-pill status-${reviewStatus}">${REVIEW_STATUS_META[reviewStatus].label}</span>
+          </div>
+        </div>
+        <div class="wbody" style="margin-bottom:6px;">
+          ${proofs === null ? `<div class="thumb-placeholder">loading…</div>` : (proof ? `<img class="thumb" src="${proof.proof}" data-role="thumb" data-src="${proof.proof}">` : `<div class="thumb-placeholder">no proof</div>`)}
+          <button class="btn btn-sm" data-role="audit-week" data-uid="${uid}" data-week="${w}" ${(!proof || !weekTotal) ? 'disabled' : ''}>🤖 Check with AI</button>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;">
+          ${['verified','needs_review','rejected'].map(s => `<button class="btn btn-sm" data-role="set-review" data-uid="${uid}" data-week="${w}" data-status="${s}"
+            style="${reviewStatus===s ? `background:${REVIEW_STATUS_META[s].bg};border-color:${REVIEW_STATUS_META[s].bg};color:${REVIEW_STATUS_META[s].fg};` : ''}">${REVIEW_STATUS_META[s].short}</button>`).join('')}
+          ${review ? `<button class="btn btn-sm" data-role="set-review" data-uid="${uid}" data-week="${w}" data-status="">Clear</button>` : ''}
+        </div>
+        ${auditHtml}
+        ${dayRows ? `<table><thead><tr><th>Day</th><th>Steps</th></tr></thead><tbody>${dayRows}</tbody></table>` : ''}
+      </div>`;
+    }
+    return weekBlocks;
   },
 
   // Photos live in their own `proofs` collection, fetched in bulk only when
@@ -2577,75 +2678,6 @@ const App = {
         <img src="${m.src}">
       </div></div>`;
     }
-    if(m.type === 'userDetail'){
-      const u = this.state.users[m.uid];
-      const rec = this.state.allSteps[m.uid] || { days:{}, hasProof:{} };
-      const proofs = this.state.viewedProofs[m.uid] || null;
-      const cfg = this.state.config;
-      const isAdmin = (this.state.users[this.state.identity.uid] || {}).role === 'admin';
-
-      let weekBlocks = '';
-      for(let w=0; w<cfg.weeks; w++){
-        const weekTotal = this.totalStepsInRange(rec, w);
-        const proof = proofs ? this.weekProofOf(proofs, w) : null;
-        const review = rec.verified && rec.verified[w];
-        const reviewStatus = review ? review.status : 'pending';
-
-        let dayRows = '';
-        if(cfg.startDate){
-          for(let d=0; d<7; d++){
-            const date = this.addDays(cfg.startDate, w*7 + d);
-            const entry = rec.days[date];
-            dayRows += `<tr><td>${this.formatDate(date)}</td><td>${entry ? entry.steps.toLocaleString() : '—'}</td></tr>`;
-          }
-        }
-
-        const auditKey = m.uid + ':' + w;
-        const audit = this.state.auditResults[auditKey];
-        let auditHtml = '';
-        if(audit && audit.loading){
-          auditHtml = `<div class="loading" style="padding:8px 0;">Checking photo against logged steps…</div>`;
-        } else if(audit && audit.error){
-          auditHtml = `<div class="notice" style="margin:10px 0;">${audit.error}</div>`;
-        } else if(audit && audit.result){
-          const flags = (audit.result.flags || []).filter(f => f.issue);
-          auditHtml = `<div style="margin:10px 0;font-size:13px;">
-            ${audit.result.summary ? `<div style="margin-bottom:6px;color:var(--ink-soft);">${audit.result.summary}</div>` : ''}
-            ${flags.length
-              ? flags.map(f => `<div class="tag tag-flag" style="display:block;margin-bottom:4px;">⚠ ${f.date}: claimed ${f.claimedSteps ?? '—'}, photo shows ${f.seenInPhoto ?? 'unclear'} — ${f.issue}</div>`).join('')
-              : `<span class="tag tag-awarded">No mismatches found</span>`}
-          </div>`;
-        }
-
-        weekBlocks += `<div class="week-card" style="margin-top:12px;">
-          <div class="wtop">
-            <div><span class="wname">Week ${w+1}</span></div>
-            <div style="display:flex;align-items:center;gap:8px;">
-              ${weekTotal?`<span class="steps-readout">${weekTotal.toLocaleString()} steps</span>`:''}
-              <span class="status-pill status-${reviewStatus}">${REVIEW_STATUS_META[reviewStatus].label}</span>
-            </div>
-          </div>
-          <div class="wbody" style="margin-bottom:6px;">
-            ${proofs === null ? `<div class="thumb-placeholder">loading…</div>` : (proof ? `<img class="thumb" src="${proof.proof}" data-role="thumb" data-src="${proof.proof}">` : `<div class="thumb-placeholder">no proof</div>`)}
-            ${isAdmin ? `<button class="btn btn-sm" data-role="audit-week" data-uid="${m.uid}" data-week="${w}" ${(!proof || !weekTotal) ? 'disabled' : ''}>🤖 Check with AI</button>` : ''}
-          </div>
-          ${isAdmin ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;">
-            ${['verified','needs_review','rejected'].map(s => `<button class="btn btn-sm" data-role="set-review" data-uid="${m.uid}" data-week="${w}" data-status="${s}"
-              style="${reviewStatus===s ? `background:${REVIEW_STATUS_META[s].bg};border-color:${REVIEW_STATUS_META[s].bg};color:${REVIEW_STATUS_META[s].fg};` : ''}">${REVIEW_STATUS_META[s].short}</button>`).join('')}
-            ${review ? `<button class="btn btn-sm" data-role="set-review" data-uid="${m.uid}" data-week="${w}" data-status="">Clear</button>` : ''}
-          </div>` : ''}
-          ${auditHtml}
-          ${dayRows ? `<table><thead><tr><th>Day</th><th>Steps</th></tr></thead><tbody>${dayRows}</tbody></table>` : ''}
-        </div>`;
-      }
-
-      return `<div class="modal-overlay" data-role="modal-overlay"><div class="modal">
-        <button class="modal-close" data-role="modal-close">&times;</button>
-        <div class="serif" style="font-size:18px;">${u.name}</div>
-        <div style="color:var(--ink-soft);font-size:13px;">${u.email}</div>
-        ${weekBlocks}
-      </div></div>`;
-    }
     return '';
   },
 
@@ -2739,7 +2771,7 @@ const App = {
     if(downloadCredsBtn) downloadCredsBtn.addEventListener('click', () => this.downloadRosterCredentials());
 
     root.querySelectorAll('[data-role="toggle-role"]').forEach(el => el.addEventListener('click', () => this.setRole(el.dataset.uid, el.dataset.newrole)));
-    root.querySelectorAll('[data-role="view-user"]').forEach(el => el.addEventListener('click', () => this.openModal({ type:'userDetail', uid: el.dataset.uid })));
+    root.querySelectorAll('[data-role="view-user"]').forEach(el => el.addEventListener('click', () => this.toggleParticipantDetail(el.dataset.uid)));
     root.querySelectorAll('[data-role="audit-week"]').forEach(el => el.addEventListener('click', () => this.runAiAudit(el.dataset.uid, Number(el.dataset.week))));
     root.querySelectorAll('[data-role="set-review"]').forEach(el => el.addEventListener('click', () => {
       this.setWeekReviewStatus(el.dataset.uid, Number(el.dataset.week), el.dataset.status || null);
