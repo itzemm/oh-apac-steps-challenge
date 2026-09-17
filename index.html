@@ -212,6 +212,7 @@ table.roster{width:100%;border-collapse:collapse;font-size:13px;min-width:640px;
 table.roster th{text-align:left;font-weight:500;color:var(--ink-soft);font-size:11px;padding:8px 8px;border-bottom:1px solid var(--line);white-space:nowrap;}
 table.roster td{padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:middle;}
 .week-cell{font-size:12px;line-height:1.7;white-space:nowrap;}
+.roster-actions{display:flex;flex-direction:column;gap:4px;min-width:64px;}
 .role-pill{font-size:12px;padding:3px 10px;border-radius:20px;background:var(--forest-tint);color:var(--forest-dark);}
 .role-pill.admin{background:var(--amber-tint);color:#7A5A11;}
 
@@ -277,6 +278,19 @@ table.roster td{padding:9px 8px;border-bottom:1px solid var(--line);vertical-ali
   .race-name{width:64px;font-size:11px;}
   .week-list .wbody{gap:10px;}
   .steps-input{width:110px;}
+}
+/* The Participants table is the widest thing in the app and the one most
+   likely to need horizontal scrolling — email is the least essential
+   column at a glance (name/team/role/actions are what an admin actually
+   needs), and shrinking it plus stacking the action buttons (see
+   .roster-actions) both cut down how far it has to scroll to stay usable
+   on a phone or a narrower laptop window, not just under 600px. */
+@media (max-width:820px){
+  .col-email{display:none;}
+  table.roster{min-width:480px;font-size:12px;}
+  table.roster th, table.roster td{padding:7px 6px;}
+  .roster-actions{min-width:56px;}
+  .roster-actions .btn{padding:4px 8px;font-size:12px;}
 }
 </style>
 </head>
@@ -2444,7 +2458,7 @@ const App = {
       html += `<div class="notice" style="margin-bottom:10px;">Set a start date above to begin tracking weekly status — names, teams, and roles below still work regardless.</div>`;
     }
     const teamOptions = Object.values(this.state.teams).sort((a,b) => a.name.localeCompare(b.name));
-    html += `<div class="table-wrap"><table class="roster"><thead><tr><th>Name</th><th>Email</th><th>Team</th>`;
+    html += `<div class="table-wrap"><table class="roster"><thead><tr><th>Name</th><th class="col-email">Email</th><th>Team</th>`;
     if(hasStart){
       for(let w=0; w<cfg.weeks; w++) html += `<th>Week ${w+1}</th>`;
       html += `<th>Total</th><th>Flag</th>`;
@@ -2460,7 +2474,7 @@ const App = {
             ${teamOptions.map(t => `<option value="${t.id}" ${u.teamId===t.id?'selected':''}>${t.name} (${(t.members||[]).length}/5)</option>`).join('')}
           </select>`
         : (u.teamId ? (this.state.teams[u.teamId]?.name || u.teamId) : '—');
-      html += `<tr data-uid="${u.uid}"><td>${u.name}</td><td>${u.email}</td><td>${teamCell}</td>`;
+      html += `<tr data-uid="${u.uid}"><td>${u.name}</td><td class="col-email">${u.email}</td><td>${teamCell}</td>`;
       if(hasStart){
         for(let w=0; w<cfg.weeks; w++){
           const weekTotal = this.totalStepsInRange(rec, w);
@@ -2481,9 +2495,11 @@ const App = {
       }
       html += `<td><span class="role-pill ${u.role==='admin'?'admin':''}">${u.role}</span></td>`;
       const expanded = this.state.expandedParticipant === u.uid;
-      html += `<td style="white-space:nowrap;">
-        <button class="btn btn-sm" data-role="view-user" data-uid="${u.uid}">${expanded ? 'Hide' : 'View'}</button>
-        <button class="btn btn-sm" data-role="toggle-role" data-uid="${u.uid}" data-newrole="${u.role==='admin'?'user':'admin'}">${u.role==='admin'?'Demote':'Promote'}</button>
+      html += `<td>
+        <div class="roster-actions">
+          <button class="btn btn-sm" data-role="view-user" data-uid="${u.uid}">${expanded ? 'Hide' : 'View'}</button>
+          <button class="btn btn-sm" data-role="toggle-role" data-uid="${u.uid}" data-newrole="${u.role==='admin'?'user':'admin'}">${u.role==='admin'?'Demote':'Promote'}</button>
+        </div>
       </td>`;
       html += `</tr>`;
       if(expanded){
