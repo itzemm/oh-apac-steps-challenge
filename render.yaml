@@ -7,9 +7,8 @@ services:
     pullRequestPreviewsEnabled: false
 
 # There used to be a second Node service here (oh-apac-steps-audit) holding
-# the Gemini API key and Firebase Admin SDK access. Both were retired to keep
-# this project entirely free with no billing account required anywhere:
-# participant management now runs client-side (see ensureUserClient() in
-# index.html, gated by firestore.rules), and the Gemini key is a restricted,
-# domain-locked key embedded directly in index.html. See the README's
-# "AI proof-photo audits" and "Provisioning accounts" sections.
+# Firebase Admin SDK access for participant management, and an AI photo-audit
+# feature backed by a Gemini key. Both are gone now: participant management
+# runs client-side (see ensureUserClient() in index.html, gated by
+# firestore.rules), and the AI audit feature was removed entirely. See the
+# README's "Provisioning accounts" section.

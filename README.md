@@ -18,10 +18,10 @@ Live sites:
   - `users/{uid}` — one profile per account, keyed by Firebase Auth uid (`name`, `email` — the synthetic one, `country`, `provider: 'password'`, `role: 'admin'|'user'`, `teamId`, `mustChangePassword`, `total`, `byWeek: [n, n, ...]`). `total`/`byWeek` are a participant's own running totals, kept in sync with their `steps` doc on every save — see **Scaling to hundreds of participants**.
   - `teams/{teamId}` — `name`, `captainUid`, `members: [uid, ...]`.
   - `bonus/{bonusId}` — admin-authored bonus challenges and who/which team has been awarded them. In the Admin tab, each challenge's award list gets a name filter once there are more than 8 people/teams to scroll through.
-  - `steps/{uid}` — each user's daily step counts and `hasProof: { [weekIndex]: true }` (just a boolean per week, not the photo itself), plus `verified: { [weekIndex]: { status: 'verified'|'rejected'|'needs_review', verifiedBy, verifiedByName, verifiedAt } }` — no entry for a week means it hasn't been reviewed yet ("pending"). Set only by an admin, from the participant's detail modal.
+  - `steps/{uid}` — each user's daily step counts and `hasProof: { [weekIndex]: true }` (just a boolean per week, not the photo itself), plus `verified: { [weekIndex]: { status: 'verified'|'rejected'|'needs_review', verifiedBy, verifiedByName, verifiedAt } }` (a whole-week verdict) and `dayReviews: { [date]: { status: 'correct'|'incorrect', verifiedBy, verifiedByName, verifiedAt } }` (a per-day right/wrong, from the proof-review modal). No entry for a week/day means it hasn't been reviewed yet. Both are set only by an admin, never the participant themselves.
   - `proofs/{uid}` — the actual weekly proof photos (compressed, stored inline as JPEG data URLs), kept separate from `steps/{uid}` on purpose — see **Scaling to hundreds of participants**.
 - `firestore.rules` — access rules (see **Security model** below). This is what actually gates who can create accounts/teams, not any server.
-- No server, no Cloud Functions, no paid tier of anything. Admin actions that in a bigger app would go through a backend instead run either straight from the browser (add/import participants — see **Provisioning accounts**) or from an admin's own machine via `/scripts` (deleting a participant — see **Security model** for why that one specifically can't be done from a webpage). The one secret this app has (the Gemini API key, for AI photo audits) is a domain-restricted key embedded directly in `index.html` — see **AI proof-photo audits**.
+- No server, no Cloud Functions, no paid tier of anything. Admin actions that in a bigger app would go through a backend instead run either straight from the browser (add/import participants — see **Provisioning accounts**) or from an admin's own machine via `/scripts` (deleting a participant — see **Security model** for why that one specifically can't be done from a webpage).
 
 ## Provisioning accounts (admin bootstrap + rosters)
 
@@ -71,8 +71,7 @@ A few things only you can do from the Firebase dashboard — none of them need a
    firebase deploy --only firestore:rules
    ```
    Run this from inside this project folder. Do this again any time `firestore.rules` changes.
-4. **Get a Gemini API key and lock it down**, then paste it into the `GEMINI_API_KEY` constant near the top of `index.html`'s script — see **AI proof-photo audits** below for exactly how to restrict it.
-5. **Provision your admin account and rosters** — see **Provisioning accounts** above.
+4. **Provision your admin account and rosters** — see **Provisioning accounts** above.
 
 Until steps 1 and 3 are done, sign-in will fail (step 1) or every read/write will be rejected (step 3) even for correctly-provisioned accounts.
 
@@ -97,26 +96,13 @@ This is a static site — no server, no build output, nothing to compile — so 
 
 Nothing Render-specific is needed for sign-in itself: Firebase's "authorized domains" restriction only applies to OAuth-style flows (Google, redirect/popup sign-in), not plain Email/Password sign-in, so there's no domain allowlist to maintain as you add GitHub Pages, Render, and any future custom domain.
 
-There used to be a second Render service (`audit-proxy/`) holding the Gemini key and Firebase Admin SDK access. That's gone — see **AI proof-photo audits** and **Provisioning accounts** for how those work now with no server at all.
+There used to be a second Render service (`audit-proxy/`) holding a Gemini key and Firebase Admin SDK access, for an AI photo-audit feature. Both the proxy and the AI audit feature itself are gone — see **Provisioning accounts** for how participant/admin accounts work now with no server at all.
 
-## AI proof-photo audits (admin)
+## Proof review (admin)
 
-In the Admin tab, "🎲 Randomly select someone to audit" opens a participant's detail view. For any week with both a proof photo and logged daily steps, an admin can click **🤖 Check with AI**: it sends that week's photo and the person's self-reported daily step counts to Gemini, asks it to read whatever step counts/dates the photo actually shows, and flags any date where the photo and the claim don't line up. After reviewing (AI-assisted or just by eye), an admin sets that week's status to **Verified**, **Needs further verification**, or **Rejected** (or **Clear** to reset it back to pending) — the resulting colored pill (Excel's classic Good/Bad/Neutral cell colors, plus grey for pending) shows up next to that week everywhere it's displayed: the participant table, the detail modal, and on the participant's own "My trail" page once that week is locked.
+In the Admin tab, "🎲 Randomly select someone to audit" expands a participant's row inline. Clicking a proof photo there opens it next to that week's day-by-day steps, with a **✓ Right** / **✗ Wrong** toggle per day, so an admin can check the photo against each claimed day. Separately, an admin sets that week's overall status to **Verified**, **Needs further verification**, or **Rejected** (or **Clear** to reset it back to pending) — the resulting colored pill (Excel's classic Good/Bad/Neutral cell colors, plus grey for pending) shows up next to that week everywhere it's displayed: the participant table, the detail row, and on the participant's own "My trail" page once that week is locked.
 
 The Admin tab also has a **Proof photos** panel listing every uploaded proof photo across all participants and weeks, with an **Export all proof (ZIP)** button that bundles them all into one download (`name_weekN.jpg`).
-
-### The Gemini key lives directly in `index.html` — this is a deliberate tradeoff, not an oversight
-
-There's no server anywhere in this app, and standing one up (Render, Cloud Functions) needs either a paid plan or a billing account on file — both ruled out for this project. So `runAiAudit()` calls Gemini straight from the browser, with the key sitting in the `GEMINI_API_KEY` constant near the top of `index.html`'s script. **Because this repo is public, that key is visible to anyone who looks at the source** — there's no way around that while keeping things server-free. What keeps this acceptable is locking the key down so a scraped copy can't do any real damage:
-
-1. In [Google AI Studio](https://aistudio.google.com/apikey) or Google Cloud Console → APIs & Services → Credentials, generate a **new** key just for this app (don't reuse one from anywhere else, including any key ever pasted into a chat — treat those as already burned).
-2. Edit the key's restrictions:
-   - **API restrictions** → restrict it to just the **Generative Language API**.
-   - **Application restrictions** → **Websites** → add the exact origins this app is served from (e.g. `https://itzemm.github.io/*` and your Render static site's URL). A key restricted this way will reject requests whose `Referer` isn't one of those origins, so it can't be lifted and reused from a random script or a different site.
-3. In Google Cloud Console → APIs & Services → the Generative Language API → Quotas, set a low daily request cap — enough for your team's actual audit volume, not the default. This bounds the worst case (someone finds the key anyway and hammers it) to "burned quota for a day," not an open-ended bill.
-4. Paste the restricted key into `GEMINI_API_KEY` in `index.html` and redeploy the static site.
-
-This is the same "check with AI" feature as before — the only thing that changed is where the key sits and the restrictions around it. See **Security model** for the full reasoning.
 
 ## Local development
 
@@ -144,7 +130,6 @@ This is an internal team-activity tool, not a system handling sensitive personal
 - **Team-structure changes (creating, re-keying, clearing, assigning, joining, leaving) only work prestart.** This is enforced in the app's own logic (`isPrestart()` in `index.html`, checked at the top of every such method, not in `firestore.rules`) rather than in the database rules themselves — `firestore.rules` still technically permits an admin to write these fields at any time, matching how the rest of this app leans on client-side gating for anything that isn't a genuine security boundary (self-registration, non-admins editing roles, etc.). The practical risk of that gap is an admin's own browser console, not an outside attacker, so it wasn't worth the added rule complexity of threading challenge-start-date logic into `firestore.rules` itself.
 - **Roles** can only be changed by an existing admin — enforced in `firestore.rules`, not just the UI. Admins can otherwise update any field on any `users/{uid}` doc (needed so client-side provisioning can reassign `teamId`), but a non-admin can only ever touch their own profile, and never their own `role`.
 - **Bonus challenges and challenge config** (start date, step limits) are admin-write-only.
-- **Steps** (`days`, `weekProof`) can be written by their own owner or an admin (admin access is used by the "reset challenge" feature). The `verified` audit stamp is the one exception carved out of "owner can write their own doc": only an admin can ever set it, enforced in `firestore.rules` — a participant can't self-verify even by calling Firestore directly, bypassing the UI entirely.
+- **Steps** (`days`, `weekProof`) can be written by their own owner or an admin (admin access is used by the "reset challenge" feature). The `verified` (whole-week) and `dayReviews` (per-day) audit stamps are the exceptions carved out of "owner can write their own doc": only an admin can ever set either, enforced in `firestore.rules` — a participant can't self-verify even by calling Firestore directly, bypassing the UI entirely.
 - **Teams are updatable** (not creatable) by any signed-in participant once they exist, since leaving/removing a teammate mutate the shared team document and there's no backend to arbitrate that. The practical risk is a participant mischievously editing another team's roster — annoying, not sensitive, and easy for an admin to fix.
-- **The Gemini key** is visible in `index.html`'s source, by necessity — see **AI proof-photo audits** for the restrictions (domain lock, API restriction, quota cap) that keep a scraped copy from being useful for anything beyond a little wasted quota.
-- **The Firebase Web config** (`apiKey`, `authDomain`, `projectId`, etc.) hardcoded in `index.html` was never a secret in the first place — Firebase's own docs are explicit about this, it's a public client identifier by design. This is *not* the same category of exposure as the Gemini key: Firebase access control lives entirely in `firestore.rules` and Auth settings, both of which are designed to be safe with a public API key. The Gemini API, by contrast, has no equivalent per-request authorization model — hence needing the manual referrer/quota restrictions instead.
+- **The Firebase Web config** (`apiKey`, `authDomain`, `projectId`, etc.) hardcoded in `index.html` was never a secret in the first place — Firebase's own docs are explicit about this, it's a public client identifier by design. Actual access control lives entirely in `firestore.rules` and Auth settings, both of which are designed to be safe with a public API key.
