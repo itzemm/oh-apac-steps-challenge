@@ -1438,59 +1438,41 @@ const App = {
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
   },
-  exportParticipantsCSV(){
+  // One consolidated export in place of the old separate participants/teams/
+  // missing-proof CSVs: every participant's name, team, daily steps, total,
+  // and whether each week's proof was ever reviewed ("audited").
+  exportAllDataCSV(){
     const cfg = this.state.config;
+    const totalDays = cfg.weeks * 7;
     const header = ['Name','Email','Country','Team','Role'];
-    for(let w=0; w<cfg.weeks; w++){ header.push('Week '+(w+1)+' Steps'); header.push('Week '+(w+1)+' Proof'); }
-    header.push('Total Steps','Bonus Steps','Overall Steps','Missing Proof Weeks');
+    for(let i=0; i<totalDays; i++){
+      header.push(cfg.startDate ? this.formatDate(this.addDays(cfg.startDate, i)) : `Day ${i+1}`);
+    }
+    header.push('Total Steps');
+    for(let w=0; w<cfg.weeks; w++) header.push(`Week ${w+1} Proof`, `Week ${w+1} Audited`);
+    header.push('Bonus Steps','Overall Steps');
     const rows = [header];
     Object.values(this.state.users).forEach(u => {
-      const rec = this.state.allSteps[u.uid] || { days:{}, hasProof:{} };
-      const row = [u.name, u.email, u.country||'', u.teamId && this.state.teams[u.teamId] ? this.state.teams[u.teamId].name : '', u.role];
-      for(let w=0; w<cfg.weeks; w++){
-        row.push(this.totalStepsInRange(rec, w) || '');
-        row.push((rec.hasProof && rec.hasProof[w]) ? 'Yes' : 'No');
+      const rec = this.state.allSteps[u.uid] || { days:{}, hasProof:{}, verified:{} };
+      const teamName = u.teamId && this.state.teams[u.teamId] ? this.state.teams[u.teamId].name : '';
+      const row = [u.name, u.email, u.country||'', teamName, u.role];
+      for(let i=0; i<totalDays; i++){
+        const date = cfg.startDate ? this.addDays(cfg.startDate, i) : null;
+        const entry = date ? rec.days[date] : null;
+        row.push(entry ? entry.steps : '');
       }
       const total = this.totalStepsOf(rec);
-      const bonus = this.individualBonusPoints(u.uid);
-      row.push(total, bonus, total+bonus, this.missingIssues(u).length);
-      rows.push(row);
-    });
-    this.downloadCSV('participants.csv', rows);
-  },
-  exportMissingProofCSV(){
-    const header = ['Name','Email','Team','Missing Steps Weeks','No-Proof Weeks','Total Issues'];
-    const rows = [header];
-    Object.values(this.state.users).forEach(u => {
-      if(u.role === 'admin') return;
-      const issues = this.missingIssues(u);
-      if(!issues.length) return;
-      const missingWeeks = issues.filter(i => i.type==='missing').map(i => i.week+1).join('; ');
-      const noProofWeeks = issues.filter(i => i.type==='no-proof').map(i => i.week+1).join('; ');
-      const teamName = u.teamId && this.state.teams[u.teamId] ? this.state.teams[u.teamId].name : '';
-      rows.push([u.name, u.email, teamName, missingWeeks, noProofWeeks, issues.length]);
-    });
-    this.downloadCSV('missing-proof.csv', rows);
-  },
-  exportTeamsCSV(){
-    const cfg = this.state.config;
-    const header = ['Team','Captain','Members','Member Count'];
-    for(let w=0; w<cfg.weeks; w++) header.push('Week '+(w+1)+' Total');
-    header.push('Total Steps','Bonus Steps','Overall Steps');
-    const rows = [header];
-    Object.values(this.state.teams).forEach(t => {
-      const memberNames = t.members.map(m => this.state.users[m] ? this.state.users[m].name : m).join('; ');
-      const row = [t.name, this.state.users[t.captainUid] ? this.state.users[t.captainUid].name : t.captainUid, memberNames, t.members.length];
+      row.push(total);
       for(let w=0; w<cfg.weeks; w++){
-        const weekTotal = t.members.reduce((s,m)=> s + this.totalStepsInRange(this.state.allSteps[m], w), 0);
-        row.push(weekTotal);
+        const hasProof = rec.hasProof && rec.hasProof[w];
+        const review = rec.verified && rec.verified[w];
+        row.push(hasProof ? 'Yes' : 'No', review ? REVIEW_STATUS_META[review.status].label : 'Not audited');
       }
-      const total = t.members.reduce((s,m)=> s + this.totalStepsOf(this.state.allSteps[m]), 0);
-      const bonus = this.teamBonusPoints(t.id);
-      row.push(total, bonus, total+bonus);
+      const bonus = this.individualBonusPoints(u.uid);
+      row.push(bonus, total+bonus);
       rows.push(row);
     });
-    this.downloadCSV('teams.csv', rows);
+    this.downloadCSV('all-data.csv', rows);
   },
   async exportProofZip(){
     if(typeof JSZip === 'undefined'){ alert('The ZIP library failed to load. Check your connection and try again.'); return; }
@@ -2468,9 +2450,7 @@ const App = {
     const hasStart = !!cfg.startDate;
     html += `<div class="panel"><h3>Participants (${users.length}) <span style="font-weight:400;font-size:12px;color:var(--ink-soft);">sorted by team, then missing proof</span></h3>`;
     html += `<div style="margin-bottom:12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
-      <button class="btn btn-sm" id="btn-export-participants">Export participants (CSV)</button>
-      <button class="btn btn-sm" id="btn-export-teams">Export teams (CSV)</button>
-      ${hasStart ? `<button class="btn btn-sm" id="btn-export-missing">Export missing proof (CSV)</button>` : ''}
+      <button class="btn btn-sm" id="btn-export-all-data">Export all data (CSV)</button>
       <button class="btn btn-sm" id="btn-random-audit">🎲 Randomly select someone to audit</button>
       ${prestart ? `<button class="btn btn-sm btn-danger" id="btn-clear-all-participants">Clear all participants</button>` : ''}
       ${hasStart ? `<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink-soft);"><input type="checkbox" id="in-missing-only" ${this.state.participantMissingOnly?'checked':''}> Show only missing proof (${missingCount})</label>` : ''}
@@ -2939,12 +2919,8 @@ const App = {
     const resetBtn = document.getElementById('btn-reset');
     if(resetBtn) resetBtn.addEventListener('click', () => this.resetChallenge());
 
-    const exportP = document.getElementById('btn-export-participants');
-    if(exportP) exportP.addEventListener('click', () => this.exportParticipantsCSV());
-    const exportT = document.getElementById('btn-export-teams');
-    if(exportT) exportT.addEventListener('click', () => this.exportTeamsCSV());
-    const exportM = document.getElementById('btn-export-missing');
-    if(exportM) exportM.addEventListener('click', () => this.exportMissingProofCSV());
+    const exportAll = document.getElementById('btn-export-all-data');
+    if(exportAll) exportAll.addEventListener('click', () => this.exportAllDataCSV());
     const missingOnlyCheck = document.getElementById('in-missing-only');
     if(missingOnlyCheck) missingOnlyCheck.addEventListener('change', () => { this.state.participantMissingOnly = missingOnlyCheck.checked; this.render(); });
     const randomAuditBtn = document.getElementById('btn-random-audit');
