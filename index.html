@@ -525,7 +525,8 @@ const App = {
     rosterImportResult: null,
     participantMissingOnly: false,
     expandedParticipant: null,
-    expandedParticipantTeams: {}
+    expandedParticipantTeams: {},
+    adminCreateMsg: null
   },
 
   init(){
@@ -1534,9 +1535,12 @@ const App = {
     const email = usernameToEmail(username);
     const existing = Object.values(this.state.users).find(u => u.email === email);
     if(existing){
-      if(existing.teamId !== teamId){
-        await updateDoc(doc(db,'users',existing.uid), { teamId });
-        existing.teamId = teamId;
+      const updates = {};
+      if(existing.teamId !== teamId) updates.teamId = teamId;
+      if(role && existing.role !== role) updates.role = role;
+      if(Object.keys(updates).length){
+        await updateDoc(doc(db,'users',existing.uid), updates);
+        Object.assign(existing, updates);
       }
       return { uid: existing.uid, created:false };
     }
@@ -1571,6 +1575,28 @@ const App = {
   },
   slugTeamId(teamName){
     return teamName.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'team';
+  },
+  // Creates a brand-new admin login straight from the website — no local
+  // script, no Firebase Console, no Admin SDK key needed. Goes through the
+  // same client-side ensureUserClient() as "Add a participant" (see its own
+  // comment above), just with role:'admin' — deliberately not gated by
+  // isPrestart() the way team rosters are, since admin accounts aren't part
+  // of team setup and there's no reason to lock this once the challenge
+  // starts. Username/password both follow the admin_name convention used
+  // throughout (see scripts/setup-admin.js).
+  async createAdmin(displayName){
+    displayName = displayName.trim();
+    if(!displayName){ alert('Enter a name.'); return; }
+    const username = 'admin_' + displayName.toLowerCase().replace(/\s+/g, '_');
+    try{
+      const { uid, created } = await this.ensureUserClient(displayName, username, null, 'admin');
+      this.state.adminCreateMsg = { type:'success', text: created
+        ? `Created admin account for ${displayName}. Username: ${username} — initial password: ${username} (they'll be prompted to change it on first login).`
+        : `${displayName} already had an account under "${username}" — made sure it's an admin.` };
+    }catch(e){
+      this.state.adminCreateMsg = { type:'error', text: e.message };
+    }
+    this.render();
   },
   async addParticipant(teamName, personName, captain){
     if(!this.isPrestart()){ alert('The challenge has started — team details are locked.'); return; }
@@ -2587,6 +2613,17 @@ const App = {
       </div>
     </div>`;
 
+    const msg = this.state.adminCreateMsg;
+    html += `<div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line);">
+      <h4 style="margin:0 0 8px;font-size:14px;">Create a brand-new admin account</h4>
+      <div style="font-size:12px;color:var(--ink-soft);margin-bottom:8px;">For someone who doesn't have a participant account yet. Creates a login with username <code>admin_name</code> (e.g. "Maya" → <code>admin_maya</code>) and an initial password that's the same as the username — they'll be prompted to change it on first login.</div>
+      ${msg ? `<div class="notice" style="${msg.type==='error' ? 'background:var(--rust-tint);color:var(--rust);' : ''}margin-bottom:8px;">${msg.text}</div>` : ''}
+      <div class="form-inline">
+        <div class="field" style="margin-bottom:0;flex:1;min-width:160px;"><label>Name</label><input type="text" id="in-new-admin-name" placeholder="Maya"></div>
+        <button class="btn btn-primary" id="btn-create-admin">Create admin</button>
+      </div>
+    </div>`;
+
     html += `</div>`;
     return html;
   },
@@ -2983,6 +3020,11 @@ const App = {
         });
       });
     }
+    const createAdminBtn = document.getElementById('btn-create-admin');
+    if(createAdminBtn) createAdminBtn.addEventListener('click', () => {
+      this.state.adminCreateMsg = null;
+      this.createAdmin(document.getElementById('in-new-admin-name').value);
+    });
     root.querySelectorAll('[data-role="save-day"]').forEach(el => el.addEventListener('click', () => this.saveDay(el.dataset.date)));
     root.querySelectorAll('[data-role="edit-day"]').forEach(el => el.addEventListener('click', () => this.editDay(el.dataset.date)));
     root.querySelectorAll('[data-role="steps-input"]').forEach(el => el.addEventListener('input', () => this.state.draftSteps[el.dataset.date] = el.value));
