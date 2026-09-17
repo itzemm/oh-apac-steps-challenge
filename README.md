@@ -54,8 +54,8 @@ Full details, including the CLI equivalents of add/import (useful as a
 fallback, or for scripting) and `delete-participant.js` (for the rare case
 you need to actually remove a login, not just unassign it), are in
 **`scripts/README.md`**. Every created account's initial password is the
-same string as its username; the app forces a password change on first
-sign-in. `setup-admin` is also how you add *more* admins later — "the admin
+same string as its username; the app shows a reminder to change it, but
+doesn't require it before signing in. `setup-admin` is also how you add *more* admins later — "the admin
 group" is just everyone it's been run for, not a separate Firestore concept.
 
 ## One-time setup still needed

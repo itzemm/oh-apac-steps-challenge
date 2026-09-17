@@ -41,6 +41,17 @@ node setup-admin.js admin_someone "Some One"
 Running it again for a username that already exists leaves that account's
 password untouched and just makes sure its profile has `role: 'admin'`.
 
+To reset an existing admin's password back to their username (e.g. after a
+lockout), add `--reset-password`:
+
+```bash
+node setup-admin.js admin_emily "Emily" --reset-password
+```
+
+This resets the password back to `admin_emily` and flags the profile so the
+app shows the change-password reminder again on next login — it does not
+touch `role`.
+
 ## Import a team roster
 
 1. Copy `roster.example.csv` to `roster.csv` and fill in real names. Columns:
@@ -57,8 +68,9 @@ For every person listed, this creates:
   underscores), e.g. `Trail_Blazers_Alice_Tan`; the initial password is that
   same string.
 - A Firestore `users/{uid}` profile, already in `role: 'user'` and already
-  assigned to their team — `mustChangePassword: true`, so the app forces a
-  password change on their first sign-in.
+  assigned to their team — `mustChangePassword: true`, so the app shows a
+  reminder banner to change it, without blocking them from using the app on
+  the temporary password in the meantime.
 - A Firestore `teams/{teamId}` doc (or updates the existing one if you're
   re-running with more people for a team you already imported).
 

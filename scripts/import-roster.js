@@ -84,7 +84,7 @@ async function main() {
       .join('\n');
     fs.writeFileSync(outPath, csvOut);
     console.log(`\nWrote ${credentials.length} account(s) to ${outPath}.`);
-    console.log('Distribute these to each person — everyone is prompted to change their password on first login.');
+    console.log('Distribute these to each person — the app shows each of them a reminder to change their password.');
     console.log('Delete generated-credentials.csv once distributed; it holds plaintext initial passwords.');
   }
   if (skipped) console.log(`\n${skipped} team row(s) skipped — see warnings above.`);

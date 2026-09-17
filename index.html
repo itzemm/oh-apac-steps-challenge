@@ -266,7 +266,8 @@ table.roster td{padding:9px 8px;border-bottom:1px solid var(--line);vertical-ali
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
 import {
   getAuth, signInWithEmailAndPassword, updatePassword,
-  onAuthStateChanged, signOut, createUserWithEmailAndPassword
+  onAuthStateChanged, signOut, createUserWithEmailAndPassword,
+  setPersistence, browserSessionPersistence
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
 import {
   getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, writeBatch
@@ -284,6 +285,12 @@ const firebaseConfig = {
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
 const db = getFirestore(fbApp);
+// Session (per-tab) persistence instead of the default local (shared-across-tabs)
+// persistence: signing out in one tab no longer signs out every other open tab
+// (each tab keeps its own independent auth state, e.g. so an admin can be
+// signed into a second account in another tab). Trade-off: closing a tab
+// signs that tab out — a fresh sign-in is needed next time it's opened.
+setPersistence(auth, browserSessionPersistence).catch(()=>{});
 
 // A second, throwaway Firebase app instance used ONLY to create new Auth
 // accounts. createUserWithEmailAndPassword() signs in as the account it just
@@ -483,7 +490,8 @@ const App = {
     teamFunFactsFor: null,
     auditResults: {},
     trailExpandedWeeks: {},
-    bonusForm: { title:'', description:'', points:'', type:'individual' },
+    viewedBonusProofs: {},
+    bonusForm: { title:'', description:'', points:'', type:'individual', requirePhoto:false, scope:'overall', weekIndex:0 },
     participantForm: { teamName:'', personName:'', captain:false },
     participantActionMsg: null,
     rosterImportBusy: false,
@@ -715,6 +723,7 @@ const App = {
       await updatePassword(auth.currentUser, newPassword);
       await updateDoc(doc(db,'users',this.state.identity.uid), { mustChangePassword:false });
       this.state.mustChangePassword = false;
+      this.state.modal = null;
       this.render();
     }catch(e){
       this.state.error = e.code === 'auth/requires-recent-login'
@@ -786,12 +795,29 @@ const App = {
   isPrestart(){
     return !this.getChallengeStatus().started;
   },
+  // A week's data (steps + proof) stays editable until the following Monday
+  // at noon, Singapore time — giving people the weekend plus Monday morning
+  // to log the previous week's steps rather than locking the instant the
+  // next week begins.
+  weekDeadline(weekIndex){
+    const monday = this.addDays(this.state.config.startDate, weekIndex*7 + 7);
+    return new Date(monday + 'T12:00:00Z');
+  },
+  isPastWeekDeadline(weekIndex){
+    if(!this.state.config.startDate) return true;
+    return this.sgtNow() >= this.weekDeadline(weekIndex);
+  },
   getWeekStatus(weekIndex){
     const status = this.getChallengeStatus();
     if(!status.started) return 'not-started';
-    if(status.ended) return 'locked';
-    if(weekIndex < status.weekIndex) return 'locked';
+    const inGrace = !this.isPastWeekDeadline(weekIndex);
+    if(status.ended){
+      if(weekIndex === status.weekIndex && inGrace) return 'editable';
+      return 'locked';
+    }
     if(weekIndex === status.weekIndex) return 'editable';
+    if(weekIndex === status.weekIndex - 1 && inGrace) return 'editable';
+    if(weekIndex < status.weekIndex) return 'locked';
     return 'future';
   },
 
@@ -799,8 +825,15 @@ const App = {
     const status = this.getChallengeStatus();
     const dayWeek = Math.floor(i/7);
     if(!status.started) return 'not-started';
-    if(status.ended) return 'locked';
-    if(dayWeek < status.weekIndex) return 'locked';
+    const inGrace = !this.isPastWeekDeadline(dayWeek);
+    if(status.ended){
+      if(dayWeek === status.weekIndex && inGrace) return 'editable';
+      return 'locked';
+    }
+    if(dayWeek < status.weekIndex){
+      if(dayWeek === status.weekIndex - 1 && inGrace) return 'editable';
+      return 'locked';
+    }
     if(dayWeek === status.weekIndex){
       if(i < status.dayIndex) return 'editable';
       if(i === status.dayIndex) return 'editable-today';
@@ -855,18 +888,15 @@ const App = {
     }
     const cfg = this.state.config;
     const limit = cfg.stepsLimit;
-    if(limit){
-      const dayIndex = this.daysBetween(cfg.startDate, date);
-      const weekIndex = Math.floor(dayIndex/7);
-      let weekTotal = 0;
-      for(let d=0; d<7; d++){
-        const dt = this.addDays(cfg.startDate, weekIndex*7 + d);
-        weekTotal += (dt === date) ? steps : (this.state.mySteps.days[dt] ? this.state.mySteps.days[dt].steps : 0);
-      }
-      if(weekTotal > limit){
-        alert("That would put this week's total at " + weekTotal.toLocaleString() + " steps, above the maximum of " + limit.toLocaleString() + " set by the admin.");
-        return;
-      }
+    if(limit && steps > limit){
+      alert("That's above the maximum of " + limit.toLocaleString() + " steps per day set by the admin.");
+      return;
+    }
+    const dayIndex = this.daysBetween(cfg.startDate, date);
+    const weekIndex = Math.floor(dayIndex/7);
+    if(this.isPastWeekDeadline(weekIndex)){
+      alert('The deadline to enter steps for that week (Monday noon) has passed.');
+      return;
     }
     this.state.mySteps.days[date] = { steps, submittedAt: new Date().toISOString() };
     delete this.state.draftSteps[date];
@@ -959,9 +989,10 @@ const App = {
   // old team-creation/browser flow that was removed: this only lets someone
   // join a team an admin/roster-sync already created, never create a new one.
   async joinTeam(teamId){
-    if(!this.isPrestart()){ alert('The challenge has started — team details are locked.'); return; }
-    const MAX_TEAM_SIZE = 5;
     const uid = this.state.identity.uid;
+    const isAdminSelf = (this.state.users[uid] || {}).role === 'admin';
+    if(!this.isPrestart() && !isAdminSelf){ alert('The challenge has started — team details are locked.'); return; }
+    const MAX_TEAM_SIZE = 5;
     const team = this.state.teams[teamId];
     if(!team) return;
     if(team.members.includes(uid)) return;
@@ -980,10 +1011,10 @@ const App = {
   // add someone with no team yet (leave the sync/add-participant team name
   // blank) and assign them afterward.
   async assignTeam(uid, newTeamId){
-    if(!this.isPrestart()){ alert('The challenge has started — team details are locked.'); this.render(); return; }
-    const MAX_TEAM_SIZE = 5;
     const u = this.state.users[uid];
     if(!u) return;
+    if(!this.isPrestart() && u.role !== 'admin'){ alert('The challenge has started — team details are locked.'); this.render(); return; }
+    const MAX_TEAM_SIZE = 5;
     newTeamId = newTeamId || null;
     if(u.teamId === newTeamId) return;
 
@@ -1091,11 +1122,125 @@ const App = {
     const title = f.title.trim();
     const points = Number(f.points);
     if(!title || !points || points <= 0){ alert('Give the challenge a title and a positive points value.'); return; }
+    const scope = f.scope === 'week' ? 'week' : 'overall';
+    const weekIndex = scope === 'week' ? Number(f.weekIndex) : null;
     const ref = doc(collection(db,'bonus'));
-    const b = { id: ref.id, title, description: f.description.trim(), points, type: f.type, active: true, createdAt: new Date().toISOString(), completed: [] };
+    const b = {
+      id: ref.id, title, description: f.description.trim(), points, type: f.type,
+      requirePhoto: !!f.requirePhoto, scope, weekIndex,
+      active: true, createdAt: new Date().toISOString(), completed: [], submissions: {}, reviews: {}
+    };
     await setDoc(ref, b);
     this.state.bonus[ref.id] = b;
-    this.state.bonusForm = { title:'', description:'', points:'', type:'individual' };
+    this.state.bonusForm = { title:'', description:'', points:'', type:'individual', requirePhoto:false, scope:'overall', weekIndex:0 };
+    this.render();
+  },
+  // Submitting a proof photo just records a lightweight timestamp on the
+  // bonus doc itself (cheap — that doc is loaded by everyone) and puts the
+  // actual photo bytes in their own `bonusProofs` doc, mirroring how weekly
+  // step proof is split from `steps/{uid}` — see the note near loadMySteps().
+  async handleBonusProofFile(challengeId, inputEl){
+    const file = inputEl.files[0];
+    if(!file) return;
+    try{
+      const dataUrl = await this.compressImage(file);
+      await this.submitBonusProof(challengeId, dataUrl);
+      this.render();
+    }catch(e){ alert('Could not process that image. Try a different file.'); }
+  },
+  async submitBonusProof(challengeId, dataUrl){
+    const ch = this.state.bonus[challengeId];
+    if(!ch) return;
+    const myTeam = this.getMyTeam();
+    const targetId = ch.type === 'team' ? (myTeam ? myTeam.id : null) : this.state.identity.uid;
+    if(!targetId){ alert('Join a team first.'); return; }
+    const now = new Date().toISOString();
+    const batch = writeBatch(db);
+    // Just a timestamp on the bonus doc — kept in its own `submissions` field,
+    // separate from the admin-only `reviews` field below, so firestore.rules
+    // can let a participant touch this without also opening up `reviews`
+    // (see that file's comment on bonus/{bonusId}).
+    batch.update(doc(db,'bonus',challengeId), { [`submissions.${targetId}`]: now });
+    batch.set(doc(db,'bonusProofs',targetId), { [challengeId]: { proof: dataUrl, submittedAt: now } }, { merge:true });
+    await batch.commit();
+    if(!ch.submissions) ch.submissions = {};
+    ch.submissions[targetId] = now;
+    this.render();
+  },
+  // Admin-only counterpart to setWeekReviewStatus() — an audit trail on a
+  // bonus submission, kept separate from actually awarding the points
+  // (toggleAward()'s `completed` list), same relationship the weekly step
+  // review status has to the step counts it doesn't gate. Lives in its own
+  // `reviews` field (never `submissions`) so a participant can never set
+  // their own review status, even by calling Firestore directly.
+  async setBonusReviewStatus(challengeId, targetId, status){
+    const ch = this.state.bonus[challengeId];
+    if(!ch || !ch.submissions || !ch.submissions[targetId]) return;
+    const entry = status
+      ? { status, verifiedBy: this.state.identity.uid, verifiedByName: this.state.identity.name, verifiedAt: new Date().toISOString() }
+      : null;
+    await updateDoc(doc(db,'bonus',challengeId), { [`reviews.${targetId}`]: entry });
+    if(!ch.reviews) ch.reviews = {};
+    ch.reviews[targetId] = entry;
+    this.render();
+  },
+  // Photos are fetched only when an admin actually opens a challenge's
+  // submissions, one bonusProofs doc per person/team who submitted —
+  // never bundled into the bonus collection everyone loads at boot.
+  async loadBonusProofsFor(challengeId){
+    const ch = this.state.bonus[challengeId];
+    if(!ch) return;
+    const ids = Object.keys(ch.submissions || {});
+    const results = {};
+    await Promise.all(ids.map(async id => {
+      const snap = await getDoc(doc(db,'bonusProofs',id));
+      results[id] = snap.exists() ? (snap.data()[challengeId] || null) : null;
+    }));
+    this.state.viewedBonusProofs[challengeId] = results;
+    this.render();
+  },
+  async runBonusAiAudit(challengeId, targetId){
+    const auditKey = 'bonus:' + challengeId + ':' + targetId;
+    this.state.auditResults[auditKey] = { loading:true };
+    this.render();
+    try{
+      const ch = this.state.bonus[challengeId];
+      const proofs = this.state.viewedBonusProofs[challengeId] || {};
+      const proofEntry = proofs[targetId];
+      if(!proofEntry) throw new Error('No proof photo uploaded.');
+      const match = /^data:([^;]+);base64,(.*)$/s.exec(proofEntry.proof);
+      if(!match) throw new Error('Could not read the proof image.');
+      const [, mimeType, imageBase64] = match;
+
+      const prompt = `You are auditing a bonus challenge submission in a workplace step-count challenge. The challenge is "${ch.title}"${ch.description ? ' — ' + ch.description : ''}. A participant submitted this photo as proof they completed it. Look closely at the photo and judge whether it plausibly supports having completed this specific challenge. Respond with ONLY JSON in this exact shape, no other text: {"summary": "one sentence overview", "plausible": true or false, "concerns": "short description of anything that looks off, or an empty string if it looks fine"}`;
+
+      const geminiRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [
+                { text: prompt },
+                { inline_data: { mime_type: mimeType || 'image/jpeg', data: imageBase64 } }
+              ]
+            }],
+            generationConfig: { temperature: 0, responseMimeType: 'application/json' }
+          })
+        }
+      );
+      const geminiData = await geminiRes.json();
+      if(!geminiRes.ok) throw new Error(geminiData?.error?.message || 'Gemini request failed.');
+      const raw = (geminiData.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
+
+      let parsed;
+      try{ parsed = JSON.parse(raw); }
+      catch(e){ throw new Error("Couldn't parse the AI's response."); }
+      this.state.auditResults[auditKey] = { loading:false, result:parsed };
+    }catch(e){
+      this.state.auditResults[auditKey] = { loading:false, error: e.message || 'Audit failed.' };
+    }
     this.render();
   },
   async toggleBonusActive(id){
@@ -1178,12 +1323,10 @@ const App = {
   // ---------- Missing-proof flag ----------
   missingIssues(user){
     const rec = this.state.allSteps[user.uid] || { days:{}, hasProof:{} };
-    const status = this.getChallengeStatus();
     const cfg = this.state.config;
     const issues = [];
     for(let w=0; w<cfg.weeks; w++){
-      const locked = status.ended ? true : (status.started && w < status.weekIndex);
-      if(!locked) continue;
+      if(this.getWeekStatus(w) !== 'locked') continue;
       const weekTotal = this.totalStepsInRange(rec, w);
       const hasProof = rec.hasProof && rec.hasProof[w];
       if(!weekTotal) issues.push({ week:w, type:'missing' });
@@ -1626,7 +1769,6 @@ const App = {
     const root = document.getElementById('app');
     if(this.state.booting){ root.innerHTML = '<div class="loading">Loading the trail…</div>'; return; }
     if(!this.state.identity){ root.innerHTML = this.renderLogin(); this.bindLogin(); return; }
-    if(this.state.mustChangePassword){ root.innerHTML = this.renderChangePassword(); this.bindChangePassword(); return; }
     root.innerHTML = this.renderAppShell();
     this.bindApp();
   },
@@ -1669,29 +1811,6 @@ const App = {
     }
   },
 
-  renderChangePassword(){
-    return `
-      <div class="login-wrap"><div class="login-card">
-        <div class="login-hero">Set a new password</div>
-        <div class="login-sub">You're signed in with a temporary password. Choose a new one before continuing — at least 8 characters.</div>
-        ${this.state.error ? `<div class="notice">${this.state.error}</div>` : ''}
-        <div class="field"><label for="in-newpass">New password</label><input id="in-newpass" type="password" autocomplete="new-password"></div>
-        <div class="field"><label for="in-newpass2">Confirm new password</label><input id="in-newpass2" type="password" autocomplete="new-password"></div>
-        <button class="btn btn-primary btn-block" id="btn-change-password">Set password</button>
-        <button class="back-link" id="btn-cp-sign-out" style="margin-top:14px;">Sign out instead</button>
-      </div></div>
-    `;
-  },
-  bindChangePassword(){
-    const submit = () => this.changePassword(
-      document.getElementById('in-newpass').value,
-      document.getElementById('in-newpass2').value
-    );
-    document.getElementById('btn-change-password').addEventListener('click', submit);
-    document.getElementById('in-newpass2').addEventListener('keydown', e => { if(e.key==='Enter') submit(); });
-    document.getElementById('btn-cp-sign-out').addEventListener('click', () => this.switchIdentity());
-  },
-
   renderAppShell(){
     const me = this.state.users[this.state.identity.uid] || { role:'user' };
     const status = this.getChallengeStatus();
@@ -1704,10 +1823,14 @@ const App = {
       <div class="header">
         <div>
           <div class="title serif"><img class="header-logo" src="assets/otters/otter-lion.png" alt="">${cfg.name || 'OH APAC Steps Challenge'}</div>
-          <div class="who">${this.state.identity.name} &nbsp;·&nbsp; <button id="btn-switch">sign out</button></div>
+          <div class="who">${this.state.identity.name} &nbsp;·&nbsp; <button id="btn-open-change-password">change password</button> &nbsp;·&nbsp; <button id="btn-switch">sign out</button></div>
         </div>
         <div class="status-pill">${statusLabel}</div>
       </div>
+      ${this.state.mustChangePassword ? `<div class="notice" style="margin:0 0 12px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+        <span>You're signed in with a temporary password.</span>
+        <button class="btn btn-sm" id="btn-nudge-change-password">Change it now</button>
+      </div>` : ''}
       <div class="tabs">
         <div class="tab ${this.state.view==='trail'?'active':''}" data-view="trail">My trail</div>
         <div class="tab ${this.state.view==='myteam'?'active':''}" data-view="myteam">My team</div>
@@ -1758,10 +1881,11 @@ const App = {
         const weekTotal = this.totalStepsInRange(this.state.mySteps, stop.weekIndex);
         const proof = this.weekProofOf(this.state.myProofs, stop.weekIndex);
         const wStatus = this.getWeekStatus(stop.weekIndex);
+        const isCurrentWeek = stop.weekIndex === status.weekIndex && !status.ended;
         if(weekTotal) dotClass += proof ? ' done' : ' partial';
-        if(wStatus === 'editable') dotClass += ' today';
+        if(isCurrentWeek) dotClass += ' today';
         if(wStatus === 'future') dotClass += ' upcoming';
-        otterMarker = wStatus === 'editable' ? `<img class="trail-otter" src="assets/otters/otter-lion.png" alt="">` : '';
+        otterMarker = isCurrentWeek ? `<img class="trail-otter" src="assets/otters/otter-lion.png" alt="">` : '';
       }
       const lineBefore = i>0 ? `<div class="trail-line${stopFilled(stops[i-1])?' filled':''}"></div>` : '<div style="flex:none;width:0;"></div>';
       const lineAfter = i<stops.length-1 ? `<div class="trail-line${stopFilled(stop)?' filled':''}"></div>` : '<div style="flex:none;width:0;"></div>';
@@ -1777,19 +1901,9 @@ const App = {
     if(bonusList.length){
       bonusHtml = `<div class="panel"><h3>Bonus challenges available</h3>` + bonusList.map(b => {
         const isTeamType = b.type === 'team';
-        const awarded = isTeamType
-          ? (myTeam ? b.completed.includes(myTeam.id) : false)
-          : b.completed.includes(this.state.identity.uid);
-        const statusTag = isTeamType && !myTeam
-          ? `<span class="tag tag-upcoming">Join a team to work toward this</span>`
-          : `<span class="tag ${awarded?'tag-awarded':'tag-pending'}">${awarded?'Awarded':'Not yet awarded'}</span>`;
-        return `<div class="challenge-card"><div class="ctop">
-          <div><span class="ctitle">${b.title}</span><span class="type-pill">${isTeamType?'Team':'Individual'}</span>${b.description ? `<div class="cdesc">${b.description}</div>` : ''}</div>
-          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
-            <span class="points-pill">${b.points} pts</span>
-            ${statusTag}
-          </div>
-        </div></div>`;
+        const targetId = isTeamType ? (myTeam ? myTeam.id : null) : this.state.identity.uid;
+        const joinPrompt = isTeamType && !myTeam ? 'Join a team to work toward this' : null;
+        return this.renderBonusCard(b, targetId, joinPrompt);
       }).join('') + `</div>`;
     }
 
@@ -1825,7 +1939,13 @@ const App = {
 
     let tag = '';
     if(wStatus === 'locked') tag = `<span class="tag tag-locked">Locked</span>`;
-    else if(wStatus === 'editable') tag = `<span class="tag tag-editable">Open</span>`;
+    else if(wStatus === 'editable'){
+      const status = this.getChallengeStatus();
+      const isGraceWeek = weekIndex !== status.weekIndex || status.ended;
+      tag = isGraceWeek
+        ? `<span class="tag tag-editable">Open until Mon ${this.formatDate(this.addDays(cfg.startDate, weekIndex*7+7))}, 12pm</span>`
+        : `<span class="tag tag-editable">Open</span>`;
+    }
     else if(wStatus === 'future') tag = `<span class="tag tag-upcoming">Not yet</span>`;
 
     let proofRow = '';
@@ -1890,6 +2010,44 @@ const App = {
     </div>`;
   },
 
+  // Shared between the individual list (renderTrail) and a team's own list
+  // (renderTeamRoster) — targetId is the uid/teamId whose award & submission
+  // status this card should reflect, or null if they don't have one yet
+  // (joinPrompt is shown instead of the normal status tag in that case).
+  renderBonusCard(b, targetId, joinPrompt){
+    const awarded = targetId ? b.completed.includes(targetId) : false;
+    const submission = targetId && b.submissions ? b.submissions[targetId] : null;
+    const deadlinePassed = b.scope === 'week' && Number.isInteger(b.weekIndex) && this.isPastWeekDeadline(b.weekIndex);
+    let statusTag;
+    if(joinPrompt){
+      statusTag = `<span class="tag tag-upcoming">${joinPrompt}</span>`;
+    } else if(awarded){
+      statusTag = `<span class="tag tag-awarded">Awarded</span>`;
+    } else if(b.requirePhoto && submission){
+      statusTag = `<span class="tag tag-pending">Submitted — pending review</span>`;
+    } else {
+      statusTag = `<span class="tag tag-pending">${b.requirePhoto ? 'Not yet submitted' : 'Not yet awarded'}</span>`;
+    }
+    const scopeLabel = b.scope === 'week' && Number.isInteger(b.weekIndex) ? `<span class="type-pill">Week ${b.weekIndex+1}</span>` : '';
+    let uploadRow = '';
+    if(!joinPrompt && b.requirePhoto && targetId && !awarded){
+      if(deadlinePassed && !submission){
+        uploadRow = `<div class="wbody" style="margin-top:8px;"><span class="tag tag-locked">Deadline passed</span></div>`;
+      } else if(!deadlinePassed){
+        uploadRow = `<div class="wbody" style="margin-top:8px;">
+          <label class="file-label">${submission ? 'Replace your proof photo' : 'Upload proof photo'}<input type="file" accept="image/*" data-bonus="${b.id}" data-role="bonus-proof-input"></label>
+        </div>`;
+      }
+    }
+    return `<div class="challenge-card"><div class="ctop">
+      <div><span class="ctitle">${b.title}</span><span class="type-pill">${b.type==='team'?'Team':'Individual'}</span>${scopeLabel}${b.description ? `<div class="cdesc">${b.description}</div>` : ''}</div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
+        <span class="points-pill">${b.points} pts</span>
+        ${statusTag}
+      </div>
+    </div>${uploadRow}</div>`;
+  },
+
   // ---------- My Team ----------
   renderMyTeam(){
     const team = this.getMyTeam();
@@ -1905,7 +2063,8 @@ const App = {
   // wait on an admin; doesn't let them create a new team (that stays
   // admin/roster-sync-only, so team names/rosters stay authoritative).
   renderTeamBrowser(){
-    if(!this.isPrestart()){
+    const isAdminSelf = (this.state.users[this.state.identity.uid] || {}).role === 'admin';
+    if(!this.isPrestart() && !isAdminSelf){
       return `<div class="panel"><div class="empty">You're not on a team, and the challenge has already started — ask your admin to sort this out.</div></div>`;
     }
     const MAX_TEAM_SIZE = 5;
@@ -1964,16 +2123,7 @@ const App = {
     const bonusList = Object.values(this.state.bonus).filter(b => b.type==='team' && b.active !== false);
     let bonusHtml = '';
     if(bonusList.length){
-      bonusHtml = `<div class="panel"><h3>Bonus challenges for your team</h3>` + bonusList.map(b => {
-        const awarded = b.completed.includes(team.id);
-        return `<div class="challenge-card"><div class="ctop">
-          <div><span class="ctitle">${b.title}</span><span class="type-pill">Team</span>${b.description ? `<div class="cdesc">${b.description}</div>` : ''}</div>
-          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
-            <span class="points-pill">${b.points} pts</span>
-            <span class="tag ${awarded?'tag-awarded':'tag-pending'}">${awarded?'Awarded':'Not yet awarded'}</span>
-          </div>
-        </div></div>`;
-      }).join('') + `</div>`;
+      bonusHtml = `<div class="panel"><h3>Bonus challenges for your team</h3>` + bonusList.map(b => this.renderBonusCard(b, team.id, null)).join('') + `</div>`;
     }
 
     return `
@@ -2102,7 +2252,7 @@ const App = {
           <button class="btn btn-primary" id="btn-save-startdate">Save date</button>
         </div>
         <div class="config-row" style="margin-top:14px;">
-          <div class="field" style="margin-bottom:0;"><label>Maximum steps per week (optional)</label><input type="number" id="in-stepslimit" min="1" placeholder="No limit" value="${cfg.stepsLimit || ''}"></div>
+          <div class="field" style="margin-bottom:0;"><label>Maximum steps per day (optional)</label><input type="number" id="in-stepslimit" min="1" placeholder="No limit" value="${cfg.stepsLimit || ''}"></div>
           <button class="btn btn-primary" id="btn-save-limit">Save limit</button>
         </div>
         <div style="margin-top:16px;"><button class="btn btn-danger btn-sm" id="btn-reset">Reset challenge data</button></div>
@@ -2157,7 +2307,7 @@ const App = {
     users.forEach(({u, issues}) => {
       const rec = this.state.allSteps[u.uid] || { days:{}, hasProof:{} };
       const total = this.totalStepsOf(rec);
-      const teamCell = prestart
+      const teamCell = (prestart || u.role === 'admin')
         ? `<select data-role="assign-team" data-uid="${u.uid}" style="font-size:12px;padding:2px 4px;">
             <option value="">No team</option>
             ${teamOptions.map(t => `<option value="${t.id}" ${u.teamId===t.id?'selected':''}>${t.name} (${(t.members||[]).length}/5)</option>`).join('')}
@@ -2268,7 +2418,7 @@ const App = {
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink-soft);margin-bottom:8px;"><input type="checkbox" id="in-part-captain" ${f.captain?'checked':''}> Make captain</label>
         <button class="btn btn-primary" id="btn-add-participant">Add</button>
       </div>
-      <div style="font-size:12px;color:var(--ink-soft);margin-top:8px;">Creates a new team if it doesn't exist yet (up to 5 people per team). Leave team name blank to create the account with no team — assign one afterward from the "Team" dropdown in the Participants table below. Their username and initial password are shown here once added — the app forces them to change it on first sign-in.</div>
+      <div style="font-size:12px;color:var(--ink-soft);margin-top:8px;">Creates a new team if it doesn't exist yet (up to 5 people per team). Leave team name blank to create the account with no team — assign one afterward from the "Team" dropdown in the Participants table below. Their username and initial password are shown here once added — the app shows them a reminder to change it, without blocking them from using it as-is.</div>
     </div>`;
 
     html += `<div class="panel">
@@ -2298,6 +2448,8 @@ const App = {
 
   renderAdminBonus(){
     const f = this.state.bonusForm;
+    const cfg = this.state.config;
+    const scopeVal = f.scope === 'week' ? `week-${f.weekIndex}` : 'overall';
     let html = `<div class="panel">
       <h3>Bonus challenges</h3>
       <div class="form-inline">
@@ -2310,6 +2462,13 @@ const App = {
             <option value="team" ${f.type==='team'?'selected':''}>Teams</option>
           </select>
         </div>
+        <div class="field" style="margin-bottom:0;width:160px;"><label>Applies to</label>
+          <select id="in-bonus-scope">
+            <option value="overall" ${scopeVal==='overall'?'selected':''}>Whole challenge</option>
+            ${Array.from({length: cfg.weeks}, (_,w) => `<option value="week-${w}" ${scopeVal==='week-'+w?'selected':''}>Week ${w+1}</option>`).join('')}
+          </select>
+        </div>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink-soft);margin-bottom:8px;"><input type="checkbox" id="in-bonus-photo" ${f.requirePhoto?'checked':''}> Require photo proof</label>
         <button class="btn btn-primary" id="btn-add-bonus">Add challenge</button>
       </div>
     </div>`;
@@ -2322,9 +2481,10 @@ const App = {
       const targets = b.type === 'individual'
         ? Object.values(this.state.users).map(u => ({ id:u.uid, name:u.name }))
         : Object.values(this.state.teams).map(t => ({ id:t.id, name:t.name }));
+      const scopeLabel = b.scope === 'week' && Number.isInteger(b.weekIndex) ? `<span class="type-pill">Week ${b.weekIndex+1}</span>` : '';
       html += `<div class="challenge-card">
         <div class="ctop">
-          <div><span class="ctitle">${b.title}</span><span class="type-pill">${b.type==='individual'?'Individual':'Team'}</span>${b.active===false?'<span class="type-pill">Disabled</span>':''}${b.description?`<div class="cdesc">${b.description}</div>`:''}</div>
+          <div><span class="ctitle">${b.title}</span><span class="type-pill">${b.type==='individual'?'Individual':'Team'}</span>${scopeLabel}${b.requirePhoto?'<span class="type-pill">Photo required</span>':''}${b.active===false?'<span class="type-pill">Disabled</span>':''}${b.description?`<div class="cdesc">${b.description}</div>`:''}</div>
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
             <span class="points-pill">${b.points} pts</span>
             <button class="btn btn-sm" data-role="toggle-bonus-active" data-id="${b.id}">${b.active===false?'Enable':'Disable'}</button>
@@ -2335,14 +2495,81 @@ const App = {
         <div class="award-grid">
           ${targets.length ? targets.map(t => `<div class="award-chip ${b.completed.includes(t.id)?'awarded':''}" data-role="toggle-award" data-id="${b.id}" data-target="${t.id}" data-name="${t.name.toLowerCase()}">${b.completed.includes(t.id)?'✓ ':''}${t.name}</div>`).join('') : `<span class="empty" style="padding:0;">No ${b.type==='individual'?'participants':'teams'} yet.</span>`}
         </div>
+        ${b.requirePhoto ? this.renderBonusSubmissions(b, targets) : ''}
       </div>`;
     });
     html += `</div>`;
     return html;
   },
 
+  // Photo-proof submissions for one bonus challenge — targets who've
+  // submitted, each with a lazy-loaded thumbnail (same on-demand fetch
+  // pattern as renderAdminProof()), an AI check, and the same
+  // verified/needs_review/rejected review buttons the weekly steps use.
+  renderBonusSubmissions(b, targets){
+    const submissions = b.submissions || {};
+    const submittedTargets = targets.filter(t => submissions[t.id]);
+    const proofsLoaded = !!this.state.viewedBonusProofs[b.id];
+    let html = `<div style="margin-top:14px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+        <strong style="font-size:13px;">Submitted proof (${submittedTargets.length})</strong>
+        ${!proofsLoaded ? `<button class="btn btn-sm" data-role="load-bonus-proofs" data-id="${b.id}">Load proof photos</button>` : ''}
+      </div>`;
+    if(proofsLoaded){
+      if(!submittedTargets.length){
+        html += `<div class="empty" style="padding:0;">No submissions yet.</div>`;
+      } else {
+        const proofs = this.state.viewedBonusProofs[b.id] || {};
+        const reviews = b.reviews || {};
+        submittedTargets.forEach(t => {
+          const review = reviews[t.id];
+          const proof = proofs[t.id];
+          const reviewStatus = review ? review.status : 'pending';
+          const auditKey = 'bonus:' + b.id + ':' + t.id;
+          const audit = this.state.auditResults[auditKey];
+          let auditHtml = '';
+          if(audit && audit.loading){
+            auditHtml = `<div class="loading" style="padding:6px 0;">Checking photo…</div>`;
+          } else if(audit && audit.error){
+            auditHtml = `<div class="notice" style="margin:6px 0;">${audit.error}</div>`;
+          } else if(audit && audit.result){
+            auditHtml = `<div style="margin:6px 0;font-size:12px;color:var(--ink-soft);">
+              ${audit.result.summary || ''}
+              ${audit.result.concerns ? `<div class="tag tag-flag" style="display:inline-block;margin-top:4px;">⚠ ${audit.result.concerns}</div>` : (audit.result.plausible ? `<span class="tag tag-awarded" style="margin-left:4px;">Looks plausible</span>` : '')}
+            </div>`;
+          }
+          html += `<div class="week-card" style="margin-bottom:10px;">
+            <div class="wtop"><div><span class="wname">${t.name}</span></div><span class="status-pill status-${reviewStatus}">${REVIEW_STATUS_META[reviewStatus].label}</span></div>
+            <div class="wbody" style="margin-bottom:6px;">
+              ${proof ? `<img class="thumb" src="${proof.proof}" data-role="thumb" data-src="${proof.proof}">` : `<div class="thumb-placeholder">no proof</div>`}
+              <button class="btn btn-sm" data-role="audit-bonus" data-id="${b.id}" data-target="${t.id}" ${!proof ? 'disabled' : ''}>🤖 Check with AI</button>
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              ${['verified','needs_review','rejected'].map(s => `<button class="btn btn-sm" data-role="set-bonus-review" data-id="${b.id}" data-target="${t.id}" data-status="${s}"
+                style="${reviewStatus===s ? `background:${REVIEW_STATUS_META[s].bg};border-color:${REVIEW_STATUS_META[s].bg};color:${REVIEW_STATUS_META[s].fg};` : ''}">${REVIEW_STATUS_META[s].short}</button>`).join('')}
+              ${review ? `<button class="btn btn-sm" data-role="set-bonus-review" data-id="${b.id}" data-target="${t.id}" data-status="">Clear</button>` : ''}
+            </div>
+            ${auditHtml}
+          </div>`;
+        });
+      }
+    }
+    html += `</div>`;
+    return html;
+  },
+
   renderModal(){
     const m = this.state.modal;
+    if(m.type === 'changePassword'){
+      return `<div class="modal-overlay" data-role="modal-overlay"><div class="modal">
+        <button class="modal-close" data-role="modal-close">&times;</button>
+        <div class="serif" style="font-size:18px;margin-bottom:10px;">Change password</div>
+        ${this.state.error ? `<div class="notice">${this.state.error}</div>` : ''}
+        <div class="field"><label for="in-newpass">New password</label><input id="in-newpass" type="password" autocomplete="new-password"></div>
+        <div class="field"><label for="in-newpass2">Confirm new password</label><input id="in-newpass2" type="password" autocomplete="new-password"></div>
+        <button class="btn btn-primary btn-block" id="btn-change-password">Set password</button>
+      </div></div>`;
+    }
     if(m.type === 'image'){
       return `<div class="modal-overlay" data-role="modal-overlay"><div class="modal">
         <button class="modal-close" data-role="modal-close">&times;</button>
@@ -2427,6 +2654,19 @@ const App = {
 
     const switchBtn = document.getElementById('btn-switch');
     if(switchBtn) switchBtn.addEventListener('click', () => this.switchIdentity());
+    const openChangePassBtn = document.getElementById('btn-open-change-password');
+    if(openChangePassBtn) openChangePassBtn.addEventListener('click', () => { this.state.error = null; this.openModal({ type:'changePassword' }); });
+    const nudgeChangePassBtn = document.getElementById('btn-nudge-change-password');
+    if(nudgeChangePassBtn) nudgeChangePassBtn.addEventListener('click', () => { this.state.error = null; this.openModal({ type:'changePassword' }); });
+    const changePassBtn = document.getElementById('btn-change-password');
+    if(changePassBtn){
+      const submit = () => this.changePassword(
+        document.getElementById('in-newpass').value,
+        document.getElementById('in-newpass2').value
+      );
+      changePassBtn.addEventListener('click', submit);
+      document.getElementById('in-newpass2').addEventListener('keydown', e => { if(e.key==='Enter') submit(); });
+    }
 
     root.querySelectorAll('.tab').forEach(el => el.addEventListener('click', () => this.setView(el.dataset.view)));
     root.querySelectorAll('.subtab').forEach(el => el.addEventListener('click', () => { this.state.lbTab = el.dataset.lb; this.render(); }));
@@ -2516,17 +2756,25 @@ const App = {
 
     const addBonusBtn = document.getElementById('btn-add-bonus');
     if(addBonusBtn) addBonusBtn.addEventListener('click', () => {
+      const scopeVal = document.getElementById('in-bonus-scope').value;
       this.state.bonusForm = {
         title: document.getElementById('in-bonus-title').value,
         description: document.getElementById('in-bonus-desc').value,
         points: document.getElementById('in-bonus-points').value,
-        type: document.getElementById('in-bonus-type').value
+        type: document.getElementById('in-bonus-type').value,
+        requirePhoto: document.getElementById('in-bonus-photo').checked,
+        scope: scopeVal === 'overall' ? 'overall' : 'week',
+        weekIndex: scopeVal === 'overall' ? 0 : Number(scopeVal.split('-')[1])
       };
       this.addBonusChallenge();
     });
     root.querySelectorAll('[data-role="toggle-bonus-active"]').forEach(el => el.addEventListener('click', () => this.toggleBonusActive(el.dataset.id)));
     root.querySelectorAll('[data-role="delete-bonus"]').forEach(el => el.addEventListener('click', () => this.deleteBonusChallenge(el.dataset.id)));
     root.querySelectorAll('[data-role="toggle-award"]').forEach(el => el.addEventListener('click', () => this.toggleAward(el.dataset.id, el.dataset.target)));
+    root.querySelectorAll('[data-role="bonus-proof-input"]').forEach(el => el.addEventListener('change', () => this.handleBonusProofFile(el.dataset.bonus, el)));
+    root.querySelectorAll('[data-role="load-bonus-proofs"]').forEach(el => el.addEventListener('click', () => this.loadBonusProofsFor(el.dataset.id)));
+    root.querySelectorAll('[data-role="audit-bonus"]').forEach(el => el.addEventListener('click', () => this.runBonusAiAudit(el.dataset.id, el.dataset.target)));
+    root.querySelectorAll('[data-role="set-bonus-review"]').forEach(el => el.addEventListener('click', () => this.setBonusReviewStatus(el.dataset.id, el.dataset.target, el.dataset.status || null)));
     root.querySelectorAll('[data-role="bonus-filter"]').forEach(input => {
       input.addEventListener('input', () => {
         const q = input.value.trim().toLowerCase();

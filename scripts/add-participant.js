@@ -48,7 +48,7 @@ async function main() {
   }
 
   console.log(`\nUsername: ${username}`);
-  console.log(`Initial password: ${username} (same as username — they'll be prompted to change it on first login)`);
+  console.log(`Initial password: ${username} (same as username — the app shows them a reminder to change it)`);
 }
 
 main().catch(e => { console.error(e); process.exit(1); });
