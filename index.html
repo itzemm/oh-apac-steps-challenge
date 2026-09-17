@@ -484,6 +484,7 @@ const App = {
     error: null,
     modal: null,
     draftSteps: {},
+    editingDays: {},
     myFunFacts: null,
     myFunFactsFor: null,
     teamFunFacts: null,
@@ -936,7 +937,12 @@ const App = {
     }
     this.state.mySteps.days[date] = { steps, submittedAt: new Date().toISOString() };
     delete this.state.draftSteps[date];
+    delete this.state.editingDays[date];
     await this.saveMySteps();
+    this.render();
+  },
+  editDay(date){
+    this.state.editingDays[date] = true;
     this.render();
   },
 
@@ -2047,13 +2053,23 @@ const App = {
     const entry = this.state.mySteps.days[date];
     const draftSteps = this.state.draftSteps[date];
     const editable = dayStatus === 'editable' || dayStatus === 'editable-today';
+    // Once a day has a saved entry, show it as plain text instead of
+    // leaving the input open — editDay()'s pencil button switches it back
+    // into edit mode on demand. A day with no entry yet always opens
+    // straight into the input, same as before.
+    const isEditing = !entry || this.state.editingDays[date];
 
     let body = '';
-    if(editable){
+    if(editable && isEditing){
       const val = draftSteps !== undefined ? draftSteps : (entry ? entry.steps : '');
       body = `
         <input class="steps-input" type="number" min="0" max="${DAILY_STEP_CAP}" placeholder="Steps" value="${val}" data-date="${date}" data-role="steps-input">
         <button class="btn btn-primary btn-sm" data-date="${date}" data-role="save-day">Save</button>
+      `;
+    } else if(editable){
+      body = `
+        <span class="tag tag-awarded">${entry.steps.toLocaleString()} steps</span>
+        <button class="btn btn-sm" data-date="${date}" data-role="edit-day">✏️ Edit</button>
       `;
     } else if(dayStatus === 'locked'){
       body = entry ? `<span class="steps-readout">${entry.steps.toLocaleString()} steps</span>` : `<span class="empty" style="padding:0;">No entry</span>`;
@@ -2754,6 +2770,7 @@ const App = {
       this.render();
     }));
     root.querySelectorAll('[data-role="save-day"]').forEach(el => el.addEventListener('click', () => this.saveDay(el.dataset.date)));
+    root.querySelectorAll('[data-role="edit-day"]').forEach(el => el.addEventListener('click', () => this.editDay(el.dataset.date)));
     root.querySelectorAll('[data-role="steps-input"]').forEach(el => el.addEventListener('input', () => this.state.draftSteps[el.dataset.date] = el.value));
     root.querySelectorAll('[data-role="proof-input"]').forEach(el => el.addEventListener('change', () => this.handleWeekProofFile(Number(el.dataset.week), el)));
     root.querySelectorAll('[data-role="thumb"]').forEach(el => el.addEventListener('click', () => this.openModal({ type:'image', src: el.dataset.src })));
