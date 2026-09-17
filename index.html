@@ -128,31 +128,17 @@ img{max-width:100%;}
 .race-axis{flex:1;display:flex;justify-content:space-between;font-size:10px;color:var(--ink-soft);
   text-transform:uppercase;letter-spacing:0.05em;padding:0 4px;}
 
-/* ---------- Podium leaderboard ---------- */
+/* ---------- Leaderboard ---------- */
 .lb-mode-toggle{display:flex;gap:6px;margin-bottom:14px;}
 .lb-mode-btn{padding:6px 16px;border-radius:20px;font-size:13px;cursor:pointer;background:#fff;border:1px solid var(--line-strong);color:var(--ink-soft);}
 .lb-mode-btn.active{background:var(--forest);border-color:var(--forest);color:#fff;}
-.podium-wrap{display:flex;align-items:flex-end;justify-content:center;gap:10px;margin:6px 0 0;}
-.podium-block{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;
-  width:31%;max-width:130px;border-radius:10px 10px 0 0;padding:10px 6px 12px;
-  background:linear-gradient(180deg,var(--forest-tint) 0%,#C3D3B4 100%);
-  border:1px solid var(--line);border-bottom:none;}
-.podium-block.rank-1{height:168px;order:2;background:linear-gradient(180deg,var(--amber-tint) 0%,#E8CE8E 100%);}
-.podium-block.rank-2{height:136px;order:1;}
-.podium-block.rank-3{height:108px;order:3;}
-.podium-otter{width:44px;height:44px;object-fit:contain;margin-bottom:6px;filter:drop-shadow(0 2px 2px rgba(0,0,0,0.25));}
-.podium-rank{font-family:'Fraunces',Georgia,serif;font-size:20px;font-weight:700;color:var(--forest-dark);line-height:1;}
-.podium-name{font-size:13px;font-weight:500;text-align:center;margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;}
-.podium-value{font-size:11px;color:var(--ink-soft);margin-top:2px;text-align:center;}
-.podium-base-bar{height:12px;background:var(--line-strong);border-radius:0 0 8px 8px;margin:0 auto;max-width:420px;}
 
-.collapsed-list{margin-top:16px;}
+.collapsed-list{margin-top:6px;}
 .collapsed-row{display:flex;justify-content:space-between;align-items:center;padding:8px 2px;border-bottom:1px solid var(--line);font-size:13px;}
 .collapsed-row:last-child{border-bottom:none;}
 .collapsed-rank{color:var(--ink-soft);width:26px;flex-shrink:0;}
 .collapsed-name{flex:1;}
 .collapsed-value{color:var(--ink-soft);font-size:12px;}
-.expand-toggle{background:none;border:none;color:var(--forest);text-decoration:underline;cursor:pointer;font-size:13px;padding:0;font-family:inherit;margin-top:10px;}
 
 /* ---------- Week cards ---------- */
 .week-list{display:flex;flex-direction:column;gap:12px;margin-bottom:6px;}
@@ -479,7 +465,6 @@ const App = {
     view: 'trail',
     lbTab: null,
     lbMode: 'team',
-    lbExpanded: false,
     booting: true,
     error: null,
     modal: null,
@@ -1349,11 +1334,24 @@ const App = {
     ch.completed = completed;
     this.render();
   },
-  individualBonusPoints(uid){
-    return Object.values(this.state.bonus).filter(b => b.type==='individual' && b.completed.includes(uid)).reduce((s,b)=>s+b.points,0);
+  // weekIndex omitted (or 'overall') counts every awarded bonus, whatever
+  // its scope — passed a specific week, only that week's own week-scoped
+  // bonuses count, so a weekly leaderboard tab only reflects bonuses that
+  // actually belong to that week (an overall-scoped bonus's points only
+  // ever show up under the Overall tab).
+  individualBonusPoints(uid, weekIndex){
+    return Object.values(this.state.bonus).filter(b => {
+      if(b.type !== 'individual' || !b.completed.includes(uid)) return false;
+      if(weekIndex === undefined || weekIndex === 'overall') return true;
+      return b.scope === 'week' && b.weekIndex === weekIndex;
+    }).reduce((s,b)=>s+b.points,0);
   },
-  teamBonusPoints(teamId){
-    return Object.values(this.state.bonus).filter(b => b.type==='team' && b.completed.includes(teamId)).reduce((s,b)=>s+b.points,0);
+  teamBonusPoints(teamId, weekIndex){
+    return Object.values(this.state.bonus).filter(b => {
+      if(b.type !== 'team' || !b.completed.includes(teamId)) return false;
+      if(weekIndex === undefined || weekIndex === 'overall') return true;
+      return b.scope === 'week' && b.weekIndex === weekIndex;
+    }).reduce((s,b)=>s+b.points,0);
   },
 
   // ---------- Fun stats ----------
@@ -2328,36 +2326,22 @@ const App = {
     }).join('');
   },
 
-  // Top 3 on a podium (varying heights), everyone else in a compact ranked
-  // list that can expand into the same race-lane visualization used above.
-  renderPodiumBoard(entries, otterSrc, unit){
+  // Plain ranked list — name, rank, total. Dense/competition ranking: a tie
+  // shares the same rank number, and the next distinct value's rank skips
+  // ahead by the size of the tie (1, 1, 3 — not 1, 1, 2), same convention
+  // sports standings use.
+  renderRankedList(entries, unit){
     if(!entries.length) return `<div class="empty">No one to rank yet.</div>`;
-    const top3 = entries.slice(0,3);
-    const rest = entries.slice(3);
-    const overallMax = entries[0].value || 1;
-
-    const podiumHtml = `<div class="podium-wrap">${top3.map((e,i) => `
-      <div class="podium-block rank-${i+1}">
-        <img class="podium-otter" src="${otterSrc}" alt="">
-        <div class="podium-rank">${i+1}</div>
-        <div class="podium-name">${e.name}</div>
-        <div class="podium-value">${e.value.toLocaleString()} ${unit}</div>
-      </div>`).join('')}</div>
-      <div class="podium-base-bar"></div>`;
-
-    if(!rest.length) return podiumHtml;
-
-    const restHtml = this.state.lbExpanded
-      ? `<div class="collapsed-list">${this.renderRaceTrack(rest, otterSrc, { max: overallMax, unit })}</div>`
-      : `<div class="collapsed-list">${rest.map((e,i) => `
-          <div class="collapsed-row">
-            <div class="collapsed-rank">${i+4}</div>
-            <div class="collapsed-name">${e.name}</div>
-            <div class="collapsed-value">${e.value.toLocaleString()} ${unit}</div>
-          </div>`).join('')}</div>`;
-    const toggleLabel = this.state.lbExpanded ? 'Hide progress bars' : 'Show progress bars';
-
-    return podiumHtml + restHtml + `<button class="expand-toggle" data-role="toggle-lb-expand">${toggleLabel}</button>`;
+    let rank = 0;
+    const rows = entries.map((e, i) => {
+      if(i === 0 || e.value !== entries[i-1].value) rank = i + 1;
+      return `<div class="collapsed-row">
+        <div class="collapsed-rank">${rank}</div>
+        <div class="collapsed-name">${e.name}</div>
+        <div class="collapsed-value">${e.value.toLocaleString()} ${unit}</div>
+      </div>`;
+    }).join('');
+    return `<div class="collapsed-list">${rows}</div>`;
   },
 
   renderLeaderboard(){
@@ -2371,17 +2355,21 @@ const App = {
     subtabs += `<div class="subtab ${this.state.lbTab==='overall'?'active':''}" data-lb="overall">Overall</div>`;
 
     const sel = this.state.lbTab === 'overall' ? 'overall' : Number(this.state.lbTab.split('-')[1]);
-    const unit = sel === 'overall' ? 'pts' : 'steps';
+    // Every step counts as a point, and so does an awarded bonus challenge's
+    // points — combined into one total on every tab (a week's tab only
+    // picks up bonuses scoped to that same week; Overall picks up all of
+    // them — see individualBonusPoints()/teamBonusPoints()).
+    const unit = 'pts';
 
     const teams = Object.values(this.state.teams).map(t => {
       let value = t.members.reduce((s,m)=> s + this.userWeekTotal(m, sel), 0);
-      if(sel === 'overall') value += this.teamBonusPoints(t.id);
+      value += this.teamBonusPoints(t.id, sel);
       return { id: t.id, name: t.name, value };
     }).sort((a,b)=>b.value-a.value);
 
     const individuals = Object.values(this.state.users).map(u => {
       let value = this.userWeekTotal(u.uid, sel);
-      if(sel === 'overall') value += this.individualBonusPoints(u.uid);
+      value += this.individualBonusPoints(u.uid, sel);
       return { id: u.uid, name: u.name, value };
     }).sort((a,b)=>b.value-a.value);
 
@@ -2391,8 +2379,8 @@ const App = {
     </div>`;
 
     const board = this.state.lbMode === 'team'
-      ? this.renderPodiumBoard(teams, 'assets/otters/otter-sg.png', unit)
-      : this.renderPodiumBoard(individuals, 'assets/otters/otter-lion.png', unit);
+      ? this.renderRankedList(teams, unit)
+      : this.renderRankedList(individuals, unit);
 
     return `
       <div class="subtabs">${subtabs}</div>
@@ -2836,8 +2824,7 @@ const App = {
 
     root.querySelectorAll('.tab').forEach(el => el.addEventListener('click', () => this.setView(el.dataset.view)));
     root.querySelectorAll('.subtab').forEach(el => el.addEventListener('click', () => { this.state.lbTab = el.dataset.lb; this.render(); }));
-    root.querySelectorAll('[data-role="lb-mode"]').forEach(el => el.addEventListener('click', () => { this.state.lbMode = el.dataset.mode; this.state.lbExpanded = false; this.render(); }));
-    root.querySelectorAll('[data-role="toggle-lb-expand"]').forEach(el => el.addEventListener('click', () => { this.state.lbExpanded = !this.state.lbExpanded; this.render(); }));
+    root.querySelectorAll('[data-role="lb-mode"]').forEach(el => el.addEventListener('click', () => { this.state.lbMode = el.dataset.mode; this.render(); }));
 
     root.querySelectorAll('[data-role="toggle-week-expand"]').forEach(el => el.addEventListener('click', () => {
       const w = Number(el.dataset.week);
