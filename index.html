@@ -203,6 +203,7 @@ img{max-width:100%;}
   cursor:pointer;margin-bottom:12px;}
 .locked-week-label{font-size:14px;font-weight:500;}
 .locked-week-total{font-size:12px;color:var(--ink-soft);font-weight:400;margin-left:6px;}
+.roster-group-row{cursor:pointer;}
 
 /* ---------- Panels / tables ---------- */
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin-bottom:18px;}
@@ -523,7 +524,8 @@ const App = {
     rosterImportBusy: false,
     rosterImportResult: null,
     participantMissingOnly: false,
-    expandedParticipant: null
+    expandedParticipant: null,
+    expandedParticipantTeams: {}
   },
 
   init(){
@@ -2448,7 +2450,7 @@ const App = {
 
     const prestart = this.isPrestart();
     const hasStart = !!cfg.startDate;
-    html += `<div class="panel"><h3>Participants (${users.length}) <span style="font-weight:400;font-size:12px;color:var(--ink-soft);">sorted by team, then missing proof</span></h3>`;
+    html += `<div class="panel"><h3>Participants (${users.length}) <span style="font-weight:400;font-size:12px;color:var(--ink-soft);">grouped by team — click a team to expand</span></h3>`;
     html += `<div style="margin-bottom:12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
       <button class="btn btn-sm" id="btn-export-all-data">Export all data (CSV)</button>
       <button class="btn btn-sm" id="btn-random-audit">🎲 Randomly select someone to audit</button>
@@ -2459,6 +2461,25 @@ const App = {
       html += `<div class="notice" style="margin-bottom:10px;">Set a start date above to begin tracking weekly status — names, teams, and roles below still work regardless.</div>`;
     }
     const teamOptions = Object.values(this.state.teams).sort((a,b) => a.name.localeCompare(b.name));
+    const colCount = 3 + (hasStart ? cfg.weeks+2 : 0) + 2;
+
+    // Grouped by team, collapsed to a one-line count each — same pattern as
+    // the proof-photo gallery below — so an admin can jump to one team's
+    // roster instead of scrolling a single flat list of everyone.
+    const teamGroups = {};
+    users.forEach(row => {
+      const teamId = row.u.teamId || '__none';
+      if(!teamGroups[teamId]) teamGroups[teamId] = [];
+      teamGroups[teamId].push(row);
+    });
+    const teamIds = Object.keys(teamGroups).sort((a,b) => {
+      if(a === '__none') return 1;
+      if(b === '__none') return -1;
+      const nameA = this.state.teams[a] ? this.state.teams[a].name : a;
+      const nameB = this.state.teams[b] ? this.state.teams[b].name : b;
+      return nameA.localeCompare(nameB);
+    });
+
     html += `<div class="table-wrap"><table class="roster"><thead><tr><th>Name</th><th class="col-email">Email</th><th>Team</th>`;
     if(hasStart){
       for(let w=0; w<cfg.weeks; w++) html += `<th>Week ${w+1}</th>`;
@@ -2466,47 +2487,60 @@ const App = {
     }
     html += `<th>Role</th><th></th></tr></thead><tbody>`;
 
-    users.forEach(({u, issues}) => {
-      const rec = this.state.allSteps[u.uid] || { days:{}, hasProof:{} };
-      const total = this.totalStepsOf(rec);
-      const teamCell = (prestart || u.role === 'admin')
-        ? `<select data-role="assign-team" data-uid="${u.uid}" style="font-size:12px;padding:2px 4px;">
-            <option value="">No team</option>
-            ${teamOptions.map(t => `<option value="${t.id}" ${u.teamId===t.id?'selected':''}>${t.name} (${(t.members||[]).length}/5)</option>`).join('')}
-          </select>`
-        : (u.teamId ? (this.state.teams[u.teamId]?.name || u.teamId) : '—');
-      html += `<tr data-uid="${u.uid}"><td>${u.name}</td><td class="col-email">${u.email}</td><td>${teamCell}</td>`;
-      if(hasStart){
-        for(let w=0; w<cfg.weeks; w++){
-          const weekTotal = this.totalStepsInRange(rec, w);
-          const proof = rec.hasProof && rec.hasProof[w];
-          const wStatus = this.getWeekStatus(w);
-          let cell;
-          const review = rec.verified && rec.verified[w];
-          const reviewPill = review ? `<span class="status-pill status-${review.status}" style="padding:2px 8px;font-size:10px;">${REVIEW_STATUS_META[review.status].short}</span>` : '';
-          if(!weekTotal){
-            cell = wStatus === 'locked' ? '<span style="color:var(--rust);">missing</span>' : (wStatus==='editable' ? 'pending' : '—');
-          } else {
-            cell = weekTotal.toLocaleString() + (proof ? ' ✓' : ' <span style="color:var(--rust);">⚠ no proof</span>') + (reviewPill ? ' ' + reviewPill : '');
-          }
-          html += `<td class="week-cell">${cell}</td>`;
-        }
-        html += `<td>${total.toLocaleString()}</td>`;
-        html += `<td>${issues.length ? `<span class="tag tag-flag">⚠ ${issues.length}</span>` : ''}</td>`;
-      }
-      html += `<td><span class="role-pill ${u.role==='admin'?'admin':''}">${u.role}</span></td>`;
-      const expanded = this.state.expandedParticipant === u.uid;
-      html += `<td>
-        <div class="roster-actions">
-          <button class="btn btn-sm" data-role="view-user" data-uid="${u.uid}">${expanded ? 'Hide' : 'View'}</button>
-          <button class="btn btn-sm" data-role="toggle-role" data-uid="${u.uid}" data-newrole="${u.role==='admin'?'user':'admin'}">${u.role==='admin'?'Demote':'Promote'}</button>
+    teamIds.forEach(teamId => {
+      const teamName = teamId === '__none' ? 'No team' : (this.state.teams[teamId] ? this.state.teams[teamId].name : teamId);
+      const groupRows = teamGroups[teamId];
+      const groupMissing = groupRows.filter(({issues}) => issues.length > 0).length;
+      const teamExpanded = !!this.state.expandedParticipantTeams[teamId];
+      html += `<tr class="roster-group-row" data-role="toggle-participant-team" data-team="${teamId}"><td colspan="${colCount}" style="padding:0;border-bottom:none;">
+        <div class="locked-week" style="margin:6px 0;">
+          <div class="locked-week-label">${teamName}<span class="locked-week-total"> — ${groupRows.length} participant${groupRows.length===1?'':'s'}${groupMissing ? `, ${groupMissing} missing proof` : ''}</span></div>
+          <span style="font-size:11px;color:var(--ink-soft);">${teamExpanded ? '▲ Collapse' : '▼ Expand'}</span>
         </div>
-      </td>`;
-      html += `</tr>`;
-      if(expanded){
-        const colCount = 3 + (hasStart ? cfg.weeks+2 : 0) + 2;
-        html += `<tr class="detail-row"><td colspan="${colCount}">${this.renderParticipantWeekBlocks(u.uid)}</td></tr>`;
-      }
+      </td></tr>`;
+      if(!teamExpanded) return;
+
+      groupRows.forEach(({u, issues}) => {
+        const rec = this.state.allSteps[u.uid] || { days:{}, hasProof:{} };
+        const total = this.totalStepsOf(rec);
+        const teamCell = (prestart || u.role === 'admin')
+          ? `<select data-role="assign-team" data-uid="${u.uid}" style="font-size:12px;padding:2px 4px;">
+              <option value="">No team</option>
+              ${teamOptions.map(t => `<option value="${t.id}" ${u.teamId===t.id?'selected':''}>${t.name} (${(t.members||[]).length}/5)</option>`).join('')}
+            </select>`
+          : (u.teamId ? (this.state.teams[u.teamId]?.name || u.teamId) : '—');
+        html += `<tr data-uid="${u.uid}"><td>${u.name}</td><td class="col-email">${u.email}</td><td>${teamCell}</td>`;
+        if(hasStart){
+          for(let w=0; w<cfg.weeks; w++){
+            const weekTotal = this.totalStepsInRange(rec, w);
+            const proof = rec.hasProof && rec.hasProof[w];
+            const wStatus = this.getWeekStatus(w);
+            let cell;
+            const review = rec.verified && rec.verified[w];
+            const reviewPill = review ? `<span class="status-pill status-${review.status}" style="padding:2px 8px;font-size:10px;">${REVIEW_STATUS_META[review.status].short}</span>` : '';
+            if(!weekTotal){
+              cell = wStatus === 'locked' ? '<span style="color:var(--rust);">missing</span>' : (wStatus==='editable' ? 'pending' : '—');
+            } else {
+              cell = weekTotal.toLocaleString() + (proof ? ' ✓' : ' <span style="color:var(--rust);">⚠ no proof</span>') + (reviewPill ? ' ' + reviewPill : '');
+            }
+            html += `<td class="week-cell">${cell}</td>`;
+          }
+          html += `<td>${total.toLocaleString()}</td>`;
+          html += `<td>${issues.length ? `<span class="tag tag-flag">⚠ ${issues.length}</span>` : ''}</td>`;
+        }
+        html += `<td><span class="role-pill ${u.role==='admin'?'admin':''}">${u.role}</span></td>`;
+        const expanded = this.state.expandedParticipant === u.uid;
+        html += `<td>
+          <div class="roster-actions">
+            <button class="btn btn-sm" data-role="view-user" data-uid="${u.uid}">${expanded ? 'Hide' : 'View'}</button>
+            <button class="btn btn-sm" data-role="toggle-role" data-uid="${u.uid}" data-newrole="${u.role==='admin'?'user':'admin'}">${u.role==='admin'?'Demote':'Promote'}</button>
+          </div>
+        </td>`;
+        html += `</tr>`;
+        if(expanded){
+          html += `<tr class="detail-row"><td colspan="${colCount}">${this.renderParticipantWeekBlocks(u.uid)}</td></tr>`;
+        }
+      });
     });
     html += `</tbody></table></div></div>`;
 
@@ -2749,7 +2783,7 @@ const App = {
           </div>
         </div>
         <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:10px;">
-          ${targets.length > 8 ? `<div class="field" style="margin-bottom:0;max-width:280px;"><input type="text" data-role="bonus-filter" placeholder="Filter by ${b.type==='individual'?'name':'team name'}…"></div>` : ''}
+          ${targets.length ? `<div class="field" style="margin-bottom:0;max-width:280px;"><input type="text" data-role="bonus-filter" placeholder="Search by ${b.type==='individual'?'individual name':'team name'}…"></div>` : ''}
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink-soft);"><input type="checkbox" data-role="bonus-awarded-filter"> Show only awarded</label>
         </div>
         <div class="award-grid">
@@ -2898,6 +2932,11 @@ const App = {
     root.querySelectorAll('[data-role="toggle-proof-team"]').forEach(el => el.addEventListener('click', () => {
       const t = el.dataset.team;
       this.state.expandedProofTeams[t] = !this.state.expandedProofTeams[t];
+      this.render();
+    }));
+    root.querySelectorAll('[data-role="toggle-participant-team"]').forEach(el => el.addEventListener('click', () => {
+      const t = el.dataset.team;
+      this.state.expandedParticipantTeams[t] = !this.state.expandedParticipantTeams[t];
       this.render();
     }));
     root.querySelectorAll('[data-role="save-day"]').forEach(el => el.addEventListener('click', () => this.saveDay(el.dataset.date)));
