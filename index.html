@@ -1960,6 +1960,19 @@ const App = {
     });
     trailHtml += `</div></div>`;
 
+    // Whichever open week's deadline is soonest — normally just the current
+    // week, but during the Monday-morning grace window the PREVIOUS week is
+    // also still 'editable' and locks first (today, not weeks from now), so
+    // that's the one worth calling out.
+    let deadlineHtml = '';
+    const openWeeks = [];
+    for(let w=0; w<cfg.weeks; w++){ if(this.getWeekStatus(w) === 'editable') openWeeks.push(w); }
+    if(openWeeks.length){
+      const soonest = openWeeks.reduce((a,b) => this.weekDeadline(a) < this.weekDeadline(b) ? a : b);
+      const deadlineLabel = this.formatDate(this.addDays(cfg.startDate, soonest*7 + 7)) + ', 12pm';
+      deadlineHtml = `<div class="notice" style="margin-bottom:18px;">⏰ <strong>Deadline:</strong> submit Week ${soonest+1}'s steps and proof photo by <strong>${deadlineLabel}</strong> (Singapore time). After that, Week ${soonest+1} will be <strong>locked</strong> — no further changes can be made.</div>`;
+    }
+
     const funHtml = this.renderFunStats(this.getFunFacts('my', myTotal));
 
     const myTeam = this.getMyTeam();
@@ -1981,7 +1994,7 @@ const App = {
     }
     weekCards += '</div>';
 
-    return trailHtml + funHtml + bonusHtml + weekCards;
+    return trailHtml + deadlineHtml + funHtml + bonusHtml + weekCards;
   },
 
   renderWeekCard(weekIndex){
@@ -2353,12 +2366,17 @@ const App = {
 
   renderLeaderboard(){
     const cfg = this.state.config;
+    const st = this.getChallengeStatus();
     if(this.state.lbTab === null){
-      const st = this.getChallengeStatus();
-      this.state.lbTab = st.started ? `week-${Math.min(st.weekIndex, cfg.weeks-1)}` : 'week-0';
+      this.state.lbTab = st.started ? `week-${Math.min(st.weekIndex, cfg.weeks-1)}` : 'overall';
     }
+    // Only a week that's actually started gets a tab — Week 2 stays hidden
+    // until Week 2 is current, so there's nothing to peek at ahead of time.
+    // Once the challenge ends, st.weekIndex is pinned to the last week, so
+    // every week shows.
+    const lastVisibleWeek = st.started ? st.weekIndex : -1;
     let subtabs = '';
-    for(let w=0; w<cfg.weeks; w++) subtabs += `<div class="subtab ${this.state.lbTab==='week-'+w?'active':''}" data-lb="week-${w}">Week ${w+1}</div>`;
+    for(let w=0; w<=lastVisibleWeek; w++) subtabs += `<div class="subtab ${this.state.lbTab==='week-'+w?'active':''}" data-lb="week-${w}">Week ${w+1}</div>`;
     subtabs += `<div class="subtab ${this.state.lbTab==='overall'?'active':''}" data-lb="overall">Overall</div>`;
 
     const sel = this.state.lbTab === 'overall' ? 'overall' : Number(this.state.lbTab.split('-')[1]);
