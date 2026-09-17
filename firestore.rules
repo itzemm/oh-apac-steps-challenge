@@ -72,6 +72,13 @@ service cloud.firestore {
     // steps/{uid}'s `verified`) is deliberately NOT in that allowance, so it
     // can only ever be set by an admin — never a participant, even by
     // calling Firestore directly.
+    //
+    // The "can't submit/replace proof after the week's Monday-noon deadline"
+    // rule is enforced only in index.html (isPastWeekDeadline()), not here —
+    // same app-level-convention trust as the pre-launch-only team edit lock
+    // above (users/{uid}'s comment), not a Firestore-rule guarantee. A
+    // participant calling Firestore directly could still write a `submissions`
+    // entry after their deadline; nothing here stops that.
     match /bonus/{bonusId} {
       allow read: if isSignedIn();
       allow create, delete: if isAdmin();
