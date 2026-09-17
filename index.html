@@ -132,13 +132,32 @@ img{max-width:100%;}
 .lb-mode-toggle{display:flex;gap:6px;margin-bottom:14px;}
 .lb-mode-btn{padding:6px 16px;border-radius:20px;font-size:13px;cursor:pointer;background:#fff;border:1px solid var(--line-strong);color:var(--ink-soft);}
 .lb-mode-btn.active{background:var(--forest);border-color:var(--forest);color:#fff;}
+.podium-wrap{display:flex;align-items:flex-end;justify-content:center;gap:10px;margin:6px 0 0;}
+.podium-block{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;
+  width:31%;max-width:130px;border-radius:10px 10px 0 0;padding:10px 6px 12px;
+  background:linear-gradient(180deg,var(--forest-tint) 0%,#C3D3B4 100%);
+  border:1px solid var(--line);border-bottom:none;}
+.podium-block.rank-1{height:168px;order:2;background:linear-gradient(180deg,var(--amber-tint) 0%,#E8CE8E 100%);}
+.podium-block.rank-2{height:136px;order:1;}
+.podium-block.rank-3{height:108px;order:3;}
+/* The viewer's own podium block (or collapsed row, below) gets a ring
+   around it so they can spot themselves at a glance, layered on top of
+   whichever rank styling (gold/silver/bronze) already applies. */
+.podium-block.mine{outline:3px solid var(--forest);outline-offset:2px;}
+.podium-otter{width:44px;height:44px;object-fit:contain;margin-bottom:6px;filter:drop-shadow(0 2px 2px rgba(0,0,0,0.25));}
+.podium-rank{font-family:'Fraunces',Georgia,serif;font-size:20px;font-weight:700;color:var(--forest-dark);line-height:1;}
+.podium-name{font-size:13px;font-weight:500;text-align:center;margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;}
+.podium-value{font-size:11px;color:var(--ink-soft);margin-top:2px;text-align:center;}
+.podium-base-bar{height:12px;background:var(--line-strong);border-radius:0 0 8px 8px;margin:0 auto;max-width:420px;}
 
-.collapsed-list{margin-top:6px;}
+.collapsed-list{margin-top:16px;}
 .collapsed-row{display:flex;justify-content:space-between;align-items:center;padding:8px 2px;border-bottom:1px solid var(--line);font-size:13px;}
 .collapsed-row:last-child{border-bottom:none;}
+.collapsed-row.mine{background:var(--forest-tint);border-radius:6px;padding-left:6px;padding-right:6px;font-weight:600;}
 .collapsed-rank{color:var(--ink-soft);width:26px;flex-shrink:0;}
 .collapsed-name{flex:1;}
 .collapsed-value{color:var(--ink-soft);font-size:12px;}
+.expand-toggle{background:none;border:none;color:var(--forest);text-decoration:underline;cursor:pointer;font-size:13px;padding:0;font-family:inherit;margin-top:10px;}
 
 /* ---------- Week cards ---------- */
 .week-list{display:flex;flex-direction:column;gap:12px;margin-bottom:6px;}
@@ -465,6 +484,7 @@ const App = {
     view: 'trail',
     lbTab: null,
     lbMode: 'team',
+    lbExpanded: false,
     booting: true,
     error: null,
     modal: null,
@@ -2326,22 +2346,55 @@ const App = {
     }).join('');
   },
 
-  // Plain ranked list — name, rank, total. Dense/competition ranking: a tie
-  // shares the same rank number, and the next distinct value's rank skips
-  // ahead by the size of the tie (1, 1, 3 — not 1, 1, 2), same convention
-  // sports standings use.
-  renderRankedList(entries, unit){
+  // name/rank/value rows, dense/competition ranked (a tie shares the same
+  // rank number; the next distinct value's rank skips ahead by the size of
+  // the tie — 1, 1, 3, not 1, 1, 2). myId's row gets a highlight.
+  renderCollapsedRows(entries, unit, myId){
+    const rows = entries.map(e => `<div class="collapsed-row${e.id===myId?' mine':''}">
+      <div class="collapsed-rank">${e.rank}</div>
+      <div class="collapsed-name">${e.name}</div>
+      <div class="collapsed-value">${e.value.toLocaleString()} ${unit}</div>
+    </div>`).join('');
+    return `<div class="collapsed-list">${rows}</div>`;
+  },
+  // Top 3 on a podium, myId's block ringed/badged if they're on it. Below
+  // that: if the viewer IS on the podium (or has no entry to look for —
+  // e.g. not on a team yet), show everyone else's row right away. If NOT,
+  // show just the viewer's own row plus a toggle to reveal everyone else,
+  // so they can always find themselves without necessarily seeing the
+  // whole roster.
+  renderLeaderboardBoard(entries, unit, myId, otterSrc){
     if(!entries.length) return `<div class="empty">No one to rank yet.</div>`;
     let rank = 0;
-    const rows = entries.map((e, i) => {
+    const ranked = entries.map((e, i) => {
       if(i === 0 || e.value !== entries[i-1].value) rank = i + 1;
-      return `<div class="collapsed-row">
-        <div class="collapsed-rank">${rank}</div>
-        <div class="collapsed-name">${e.name}</div>
-        <div class="collapsed-value">${e.value.toLocaleString()} ${unit}</div>
-      </div>`;
-    }).join('');
-    return `<div class="collapsed-list">${rows}</div>`;
+      return { ...e, rank };
+    });
+    const top3 = ranked.slice(0,3);
+    const rest = ranked.slice(3);
+    const myEntry = myId != null ? ranked.find(e => e.id === myId) : null;
+    const myInTop3 = !!myEntry && top3.some(e => e.id === myId);
+
+    const podiumHtml = `<div class="podium-wrap">${top3.map(e => `
+      <div class="podium-block rank-${e.rank}${e.id===myId?' mine':''}">
+        <img class="podium-otter" src="${otterSrc}" alt="">
+        <div class="podium-rank">${e.rank}</div>
+        <div class="podium-name">${e.name}</div>
+        <div class="podium-value">${e.value.toLocaleString()} ${unit}</div>
+        ${e.id===myId ? `<span class="tag tag-awarded" style="margin-top:4px;">You</span>` : ''}
+      </div>`).join('')}</div>
+      <div class="podium-base-bar"></div>`;
+
+    if(!rest.length) return podiumHtml;
+
+    if(myInTop3 || !myEntry){
+      return podiumHtml + this.renderCollapsedRows(rest, unit, myId);
+    }
+    const restHtml = this.state.lbExpanded
+      ? this.renderCollapsedRows(rest, unit, myId)
+      : this.renderCollapsedRows([myEntry], unit, myId);
+    const toggleLabel = this.state.lbExpanded ? 'Hide full list' : 'Show full list';
+    return podiumHtml + restHtml + `<button class="expand-toggle" data-role="toggle-lb-expand">${toggleLabel}</button>`;
   },
 
   renderLeaderboard(){
@@ -2378,9 +2431,10 @@ const App = {
       <button class="lb-mode-btn ${this.state.lbMode==='individual'?'active':''}" data-role="lb-mode" data-mode="individual">Individuals</button>
     </div>`;
 
+    const myTeam = this.getMyTeam();
     const board = this.state.lbMode === 'team'
-      ? this.renderRankedList(teams, unit)
-      : this.renderRankedList(individuals, unit);
+      ? this.renderLeaderboardBoard(teams, unit, myTeam ? myTeam.id : null, 'assets/otters/otter-sg.png')
+      : this.renderLeaderboardBoard(individuals, unit, this.state.identity.uid, 'assets/otters/otter-lion.png');
 
     return `
       <div class="subtabs">${subtabs}</div>
@@ -2824,7 +2878,8 @@ const App = {
 
     root.querySelectorAll('.tab').forEach(el => el.addEventListener('click', () => this.setView(el.dataset.view)));
     root.querySelectorAll('.subtab').forEach(el => el.addEventListener('click', () => { this.state.lbTab = el.dataset.lb; this.render(); }));
-    root.querySelectorAll('[data-role="lb-mode"]').forEach(el => el.addEventListener('click', () => { this.state.lbMode = el.dataset.mode; this.render(); }));
+    root.querySelectorAll('[data-role="lb-mode"]').forEach(el => el.addEventListener('click', () => { this.state.lbMode = el.dataset.mode; this.state.lbExpanded = false; this.render(); }));
+    root.querySelectorAll('[data-role="toggle-lb-expand"]').forEach(el => el.addEventListener('click', () => { this.state.lbExpanded = !this.state.lbExpanded; this.render(); }));
 
     root.querySelectorAll('[data-role="toggle-week-expand"]').forEach(el => el.addEventListener('click', () => {
       const w = Number(el.dataset.week);
