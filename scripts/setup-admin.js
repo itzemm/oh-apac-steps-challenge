@@ -5,10 +5,10 @@
 //
 // Usage: node setup-admin.js [username] [display name] [--reset-password]
 // Defaults to username "admin_emily", display name "Emily".
-// The initial password is the same as the username — you'll be prompted to
-// change it the first time you sign in.
-// Pass --reset-password to force an *existing* account's password back to
-// its username (e.g. after a lockout) and require a change on next login.
+// The initial password is the same as the username — the app shows a
+// reminder to change it, but doesn't force you to before doing anything else.
+// Pass --reset-password to reset an *existing* account's password back to
+// its username (e.g. after a lockout) and bring that reminder back.
 
 import { initAdmin } from './lib/firebase-admin-init.js';
 import { usernameToEmail } from './lib/naming.js';
@@ -28,7 +28,7 @@ async function main() {
     console.log(`Account already exists: ${username} (${userRecord.uid}).`);
     if (resetPassword) {
       await auth.updateUser(userRecord.uid, { password: username });
-      console.log(`Password reset to "${username}" — you'll be prompted to change it on next login.`);
+      console.log(`Password reset to "${username}" — the app will show a reminder to change it on next login.`);
     } else {
       console.log('Leaving its password as-is — pass --reset-password to reset it back to the username.');
     }
@@ -36,7 +36,7 @@ async function main() {
     if (e.code !== 'auth/user-not-found') throw e;
     userRecord = await auth.createUser({ email, password: username, displayName });
     console.log(`Created admin account: ${username} (${userRecord.uid})`);
-    console.log(`Initial password is the same as the username ("${username}") — you'll be prompted to change it on first login.`);
+    console.log(`Initial password is the same as the username ("${username}") — the app will show a reminder to change it.`);
   }
 
   const userRef = db.collection('users').doc(userRecord.uid);
@@ -53,7 +53,7 @@ async function main() {
     if (resetPassword) updates.mustChangePassword = true;
     if (Object.keys(updates).length) {
       await userRef.update(updates);
-      console.log(updates.role ? 'Profile already existed — promoted it to admin.' : 'Profile already existed — flagged to require a password change.');
+      console.log(updates.role ? 'Profile already existed — promoted it to admin.' : 'Profile already existed — flagged to show the password-change reminder.');
     } else {
       console.log('Profile already existed and is already admin — nothing to change.');
     }

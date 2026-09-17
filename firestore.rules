@@ -60,10 +60,35 @@ service cloud.firestore {
       allow delete: if isSignedIn() && resource.data.members.size() == 0;
     }
 
-    // Bonus challenges are admin-authored and admin-awarded.
+    // Bonus challenges are admin-authored and admin-awarded. Everyone can
+    // read them (needed to show what's on offer), and admins can write
+    // anything — but a participant may also update the doc themselves, ONLY
+    // to touch the `submissions` map (a timestamp per person/team who's
+    // uploaded proof), so they can record their own submission without an
+    // admin having to do it for them. (This trusts any signed-in user not to
+    // tamper with someone else's submission entry — the same trust level
+    // teams/{teamId} already gives any signed-in participant.) The `reviews`
+    // map (an admin's verified/rejected/needs_review verdict, same shape as
+    // steps/{uid}'s `verified`) is deliberately NOT in that allowance, so it
+    // can only ever be set by an admin — never a participant, even by
+    // calling Firestore directly.
     match /bonus/{bonusId} {
       allow read: if isSignedIn();
-      allow write: if isAdmin();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin()
+        || (isSignedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['submissions']));
+    }
+
+    // Bonus challenge proof photos, kept out of bonus/{bonusId} (loaded by
+    // everyone) the same way proofs/{uid} is kept out of steps/{uid} — see
+    // that collection's comment. Keyed by uid for an individual challenge or
+    // by teamId for a team one; either the account it belongs to, any member
+    // of the team it belongs to, or an admin may write it.
+    match /bonusProofs/{id} {
+      allow read: if isSignedIn();
+      allow create, update: if isAdmin() || isSelf(id)
+        || (isSignedIn() && exists(/databases/$(database)/documents/teams/$(id)));
+      allow delete: if isAdmin();
     }
 
     // Per-user step logs, keyed by uid. Everyone can read (leaderboard/team
