@@ -485,6 +485,7 @@ const App = {
     lbTab: null,
     lbMode: 'team',
     lbExpanded: false,
+    lbRefreshing: false,
     booting: true,
     error: null,
     modal: null,
@@ -582,6 +583,16 @@ const App = {
     }catch(e){ this.state.bonus = {}; }
   },
   async saveConfig(){ await setDoc(doc(db,'config','main'), this.state.config, { merge:true }); },
+  // Re-fetches everyone's totals, teams, and bonus awards on demand — same
+  // data setView('myteam') already refreshes on open, but the Leaderboard
+  // tab doesn't switch views to trigger that, so it gets its own button.
+  async refreshLeaderboard(){
+    this.state.lbRefreshing = true;
+    this.render();
+    await Promise.all([this.loadUsers(), this.loadTeams(), this.loadBonus()]);
+    this.state.lbRefreshing = false;
+    this.render();
+  },
 
   // Proof photos live in their own doc (proofs/{uid}), separate from steps/{uid}
   // (daily counts + a hasProof boolean map + review status). This is what lets
@@ -2387,12 +2398,18 @@ const App = {
 
     if(!rest.length) return podiumHtml;
 
-    if(myInTop3 || !myEntry){
-      return podiumHtml + this.renderCollapsedRows(rest, unit, myId);
+    // Collapsed by default no matter who's on the podium: just the viewer's
+    // own row (if they have one outside the top 3 — nothing extra to show
+    // if they're already on the podium, or have no entry at all). Expanding
+    // always reveals everyone, with the viewer's row still highlighted.
+    let restHtml;
+    if(this.state.lbExpanded){
+      restHtml = this.renderCollapsedRows(rest, unit, myId);
+    } else if(myEntry && !myInTop3){
+      restHtml = this.renderCollapsedRows([myEntry], unit, myId);
+    } else {
+      restHtml = '';
     }
-    const restHtml = this.state.lbExpanded
-      ? this.renderCollapsedRows(rest, unit, myId)
-      : this.renderCollapsedRows([myEntry], unit, myId);
     const toggleLabel = this.state.lbExpanded ? 'Hide full list' : 'Show full list';
     return podiumHtml + restHtml + `<button class="expand-toggle" data-role="toggle-lb-expand">${toggleLabel}</button>`;
   },
@@ -2426,9 +2443,12 @@ const App = {
       return { id: u.uid, name: u.name, value };
     }).sort((a,b)=>b.value-a.value);
 
-    const modeToggle = `<div class="lb-mode-toggle">
-      <button class="lb-mode-btn ${this.state.lbMode==='team'?'active':''}" data-role="lb-mode" data-mode="team">Teams</button>
-      <button class="lb-mode-btn ${this.state.lbMode==='individual'?'active':''}" data-role="lb-mode" data-mode="individual">Individuals</button>
+    const topRow = `<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;">
+      <div class="lb-mode-toggle" style="margin-bottom:0;">
+        <button class="lb-mode-btn ${this.state.lbMode==='team'?'active':''}" data-role="lb-mode" data-mode="team">Teams</button>
+        <button class="lb-mode-btn ${this.state.lbMode==='individual'?'active':''}" data-role="lb-mode" data-mode="individual">Individuals</button>
+      </div>
+      <button class="btn btn-sm" id="btn-refresh-leaderboard" ${this.state.lbRefreshing ? 'disabled' : ''}>${this.state.lbRefreshing ? 'Refreshing…' : '↻ Refresh'}</button>
     </div>`;
 
     const myTeam = this.getMyTeam();
@@ -2439,8 +2459,8 @@ const App = {
     return `
       <div class="subtabs">${subtabs}</div>
       <div class="panel race-panel">
-        ${modeToggle}
-        ${board}
+        ${topRow}
+        <div style="margin-top:14px;">${board}</div>
       </div>
     `;
   },
@@ -2880,6 +2900,8 @@ const App = {
     root.querySelectorAll('.subtab').forEach(el => el.addEventListener('click', () => { this.state.lbTab = el.dataset.lb; this.render(); }));
     root.querySelectorAll('[data-role="lb-mode"]').forEach(el => el.addEventListener('click', () => { this.state.lbMode = el.dataset.mode; this.state.lbExpanded = false; this.render(); }));
     root.querySelectorAll('[data-role="toggle-lb-expand"]').forEach(el => el.addEventListener('click', () => { this.state.lbExpanded = !this.state.lbExpanded; this.render(); }));
+    const refreshLbBtn = document.getElementById('btn-refresh-leaderboard');
+    if(refreshLbBtn) refreshLbBtn.addEventListener('click', () => this.refreshLeaderboard());
 
     root.querySelectorAll('[data-role="toggle-week-expand"]').forEach(el => el.addEventListener('click', () => {
       const w = Number(el.dataset.week);
