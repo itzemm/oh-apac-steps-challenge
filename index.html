@@ -464,6 +464,7 @@ const App = {
     bonus: {},
     mySteps: null,
     myProofs: null,
+    myBonusProofs: {},
     allSteps: {},
     allStepsLoaded: false,
     viewedProofs: {},
@@ -737,7 +738,25 @@ const App = {
 
   async enterApp(){
     await this.loadMySteps();
+    await this.loadMyBonusProofs();
     this.state.view = 'trail';
+  },
+  // Own bonus proof photos — the bonusProofs doc(s) that are actually theirs
+  // (their own uid for individual challenges, their team's id for team
+  // ones), loaded once at login same as loadMySteps() loads their own
+  // steps/proofs doc. Never touches another person's or team's doc, so this
+  // stays a small, personal fetch rather than the bulk admin-only load
+  // loadBonusProofsFor() does.
+  async loadMyBonusProofs(){
+    const uid = this.state.identity.uid;
+    const myTeam = this.getMyTeam();
+    const ids = myTeam ? [uid, myTeam.id] : [uid];
+    const merged = {};
+    await Promise.all(ids.map(async id => {
+      const snap = await getDoc(doc(db,'bonusProofs',id));
+      if(snap.exists()) Object.assign(merged, snap.data());
+    }));
+    this.state.myBonusProofs = merged;
   },
 
   async switchIdentity(){
@@ -1166,6 +1185,10 @@ const App = {
     const myTeam = this.getMyTeam();
     const targetId = ch.type === 'team' ? (myTeam ? myTeam.id : null) : this.state.identity.uid;
     if(!targetId){ alert('Join a team first.'); return; }
+    if(ch.scope === 'week' && Number.isInteger(ch.weekIndex) && this.isPastWeekDeadline(ch.weekIndex)){
+      alert('The deadline for this challenge (Monday noon) has passed — this can no longer be changed.');
+      return;
+    }
     const now = new Date().toISOString();
     const batch = writeBatch(db);
     // Just a timestamp on the bonus doc — kept in its own `submissions` field,
@@ -1177,6 +1200,7 @@ const App = {
     await batch.commit();
     if(!ch.submissions) ch.submissions = {};
     ch.submissions[targetId] = now;
+    this.state.myBonusProofs[challengeId] = { proof: dataUrl, submittedAt: now };
     this.render();
   },
   // Admin-only counterpart to setWeekReviewStatus() — an audit trail on a
@@ -2057,14 +2081,28 @@ const App = {
       statusTag = `<span class="tag tag-pending">${b.requirePhoto ? 'Not yet submitted' : 'Not yet awarded'}</span>`;
     }
     const scopeLabel = b.scope === 'week' && Number.isInteger(b.weekIndex) ? `<span class="type-pill">Week ${b.weekIndex+1}</span>` : '';
-    let uploadRow = '';
-    if(!joinPrompt && b.requirePhoto && targetId && !awarded){
-      if(deadlinePassed && !submission){
-        uploadRow = `<div class="wbody" style="margin-top:8px;"><span class="tag tag-locked">Deadline passed</span></div>`;
-      } else if(!deadlinePassed){
-        uploadRow = `<div class="wbody" style="margin-top:8px;">
+    // Editing (uploading/replacing) is only allowed before the week's
+    // deadline and before it's been awarded — enforced here in the UI the
+    // same way team-roster editing is only ever enforced by app convention
+    // (see firestore.rules' comment on bonus/{bonusId}), not by a Firestore
+    // rule, since there's no backend to hold a stricter server-side check.
+    const canEdit = !awarded && !deadlinePassed;
+    const myProof = targetId ? this.state.myBonusProofs[b.id] : null;
+    const thumbHtml = myProof ? `<img class="thumb" src="${myProof.proof}" data-role="thumb" data-src="${myProof.proof}">` : '';
+    let proofSection = '';
+    if(!joinPrompt && b.requirePhoto && targetId){
+      if(canEdit){
+        proofSection = `<div class="wbody" style="margin-top:8px;">
+          ${thumbHtml}
           <label class="file-label">${submission ? 'Replace your proof photo' : 'Upload proof photo'}<input type="file" accept="image/*" data-bonus="${b.id}" data-role="bonus-proof-input"></label>
         </div>`;
+      } else if(submission){
+        proofSection = `<div class="wbody" style="margin-top:8px;">
+          ${thumbHtml}
+          ${!awarded ? `<span class="tag tag-locked">Deadline passed — can no longer be changed</span>` : ''}
+        </div>`;
+      } else if(deadlinePassed){
+        proofSection = `<div class="wbody" style="margin-top:8px;"><span class="tag tag-locked">Deadline passed</span></div>`;
       }
     }
     return `<div class="challenge-card"><div class="ctop">
@@ -2073,7 +2111,7 @@ const App = {
         <span class="points-pill">${b.points} pts</span>
         ${statusTag}
       </div>
-    </div>${uploadRow}</div>`;
+    </div>${proofSection}</div>`;
   },
 
   // ---------- My Team ----------
