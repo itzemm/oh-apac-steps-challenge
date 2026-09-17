@@ -41,6 +41,16 @@ node setup-admin.js admin_someone "Some One"
 Running it again for a username that already exists leaves that account's
 password untouched and just makes sure its profile has `role: 'admin'`.
 
+To reset an existing admin's password back to their username (e.g. after a
+lockout), add `--reset-password`:
+
+```bash
+node setup-admin.js admin_emily "Emily" --reset-password
+```
+
+This forces the password back to `admin_emily` and flags the profile so the
+app prompts for a new one on next login — it does not touch `role`.
+
 ## Import a team roster
 
 1. Copy `roster.example.csv` to `roster.csv` and fill in real names. Columns:
