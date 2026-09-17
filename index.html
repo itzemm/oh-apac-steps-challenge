@@ -2491,7 +2491,7 @@ const App = {
       const teamName = teamId === '__none' ? 'No team' : (this.state.teams[teamId] ? this.state.teams[teamId].name : teamId);
       const groupRows = teamGroups[teamId];
       const groupMissing = groupRows.filter(({issues}) => issues.length > 0).length;
-      const teamExpanded = !!this.state.expandedParticipantTeams[teamId];
+      const teamExpanded = this.state.participantMissingOnly || !!this.state.expandedParticipantTeams[teamId];
       html += `<tr class="roster-group-row" data-role="toggle-participant-team" data-team="${teamId}"><td colspan="${colCount}" style="padding:0;border-bottom:none;">
         <div class="locked-week" style="margin:6px 0;">
           <div class="locked-week-label">${teamName}<span class="locked-week-total"> — ${groupRows.length} participant${groupRows.length===1?'':'s'}${groupMissing ? `, ${groupMissing} missing proof` : ''}</span></div>
@@ -2551,8 +2551,43 @@ const App = {
       </div>`).join('') : `<div class="empty">No teams formed yet.</div>`;
     html += `</div>`;
 
+    html += this.renderAdminAdmins();
     html += this.renderAdminProof();
 
+    return html;
+  },
+
+  // Who currently has admin access, plus a search-to-promote tool for
+  // granting it and a one-click demote for revoking it (e.g. someone
+  // promoted by mistake). Promote/demote both go through the same
+  // toggle-role action the Participants table's own Promote/Demote button
+  // uses (see setRole()) — this is just a second, more findable place to
+  // reach it, focused on admins specifically rather than buried inside a
+  // collapsed team group.
+  renderAdminAdmins(){
+    const allUsers = Object.values(this.state.users);
+    const admins = allUsers.filter(u => u.role === 'admin').sort((a,b) => a.name.localeCompare(b.name));
+    const nonAdmins = allUsers.filter(u => u.role !== 'admin').sort((a,b) => a.name.localeCompare(b.name));
+
+    let html = `<div class="panel"><h3>Admins (${admins.length})</h3>`;
+    html += admins.length
+      ? `<div class="table-wrap"><table class="roster"><thead><tr><th>Name</th><th class="col-email">Email</th><th>Team</th><th></th></tr></thead><tbody>`
+        + admins.map(u => `<tr><td>${u.name}</td><td class="col-email">${u.email}</td><td>${u.teamId ? (this.state.teams[u.teamId]?.name || u.teamId) : '—'}</td>
+            <td><button class="btn btn-sm" data-role="toggle-role" data-uid="${u.uid}" data-newrole="user">Demote</button></td></tr>`).join('')
+        + `</tbody></table></div>`
+      : `<div class="empty">No admins yet.</div>`;
+
+    html += `<div style="margin-top:14px;">
+      <div class="field" style="margin-bottom:8px;max-width:320px;"><label>Promote a participant to admin</label><input type="text" id="in-admin-promote-search" placeholder="Search by name…" autocomplete="off"></div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;">
+        ${nonAdmins.map(u => `<div data-role="promote-candidate" data-name="${u.name.toLowerCase()}" style="display:none;align-items:center;gap:8px;border:1px solid var(--line-strong);border-radius:20px;padding:4px 6px 4px 12px;font-size:12px;">
+          <span>${u.name}</span>
+          <button class="btn btn-sm" data-role="toggle-role" data-uid="${u.uid}" data-newrole="admin">Promote</button>
+        </div>`).join('')}
+      </div>
+    </div>`;
+
+    html += `</div>`;
     return html;
   },
 
@@ -2939,6 +2974,15 @@ const App = {
       this.state.expandedParticipantTeams[t] = !this.state.expandedParticipantTeams[t];
       this.render();
     }));
+    const promoteSearch = document.getElementById('in-admin-promote-search');
+    if(promoteSearch){
+      promoteSearch.addEventListener('input', () => {
+        const q = promoteSearch.value.trim().toLowerCase();
+        root.querySelectorAll('[data-role="promote-candidate"]').forEach(el => {
+          el.style.display = (q && el.dataset.name.includes(q)) ? 'flex' : 'none';
+        });
+      });
+    }
     root.querySelectorAll('[data-role="save-day"]').forEach(el => el.addEventListener('click', () => this.saveDay(el.dataset.date)));
     root.querySelectorAll('[data-role="edit-day"]').forEach(el => el.addEventListener('click', () => this.editDay(el.dataset.date)));
     root.querySelectorAll('[data-role="steps-input"]').forEach(el => el.addEventListener('input', () => this.state.draftSteps[el.dataset.date] = el.value));
