@@ -254,6 +254,18 @@ table.roster td{padding:9px 8px;border-bottom:1px solid var(--line);vertical-ali
 .modal-close{float:right;background:none;border:none;font-size:20px;cursor:pointer;color:var(--ink-soft);line-height:1;}
 .modal table{width:100%;border-collapse:collapse;font-size:13px;margin-top:12px;}
 .modal table td, .modal table th{padding:6px 4px;border-bottom:1px solid var(--line);}
+.modal-wide{max-width:720px;}
+.proof-review-layout{display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start;margin-top:10px;}
+.proof-review-img{flex:1 1 260px;max-width:320px;width:100%;border-radius:8px;border:1px solid var(--line);margin-top:0;}
+.proof-review-days{flex:1 1 260px;min-width:240px;}
+.day-review-row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--line);font-size:13px;flex-wrap:wrap;}
+.day-review-row:last-child{border-bottom:none;}
+.day-review-date{color:var(--ink-soft);flex-shrink:0;}
+.day-review-date .dow{font-weight:500;color:var(--ink);margin-right:4px;}
+.day-review-steps{flex:1;font-weight:500;text-align:right;padding-right:8px;}
+.day-review-actions{display:flex;gap:4px;flex-shrink:0;}
+.day-review-actions .btn.active-correct{background:#C6EFCE;border-color:#C6EFCE;color:#006100;}
+.day-review-actions .btn.active-incorrect{background:#FFC7CE;border-color:#FFC7CE;color:#9C0006;}
 
 .empty{color:var(--ink-soft);font-size:14px;padding:16px 0;}
 .loading{color:var(--ink-soft);font-size:14px;padding:16px 0;}
@@ -1836,6 +1848,25 @@ const App = {
     rec.verified = verifiedMap;
     this.render();
   },
+  // Per-day counterpart to setWeekReviewStatus() — 'correct'/'incorrect' on
+  // one specific date, for the proof-review modal (image + day list side by
+  // side). Clicking the already-active status again clears it back to
+  // unreviewed, same toggle behavior the week-level buttons don't have but
+  // this needs since there's no separate "Clear" button per day.
+  async setDayReview(uid, date, status){
+    const rec = this.state.allSteps[uid];
+    if(!rec){ alert("This person hasn't logged any steps yet."); return; }
+    const dayReviews = { ...(rec.dayReviews || {}) };
+    const existing = dayReviews[date];
+    if(existing && existing.status === status){
+      delete dayReviews[date];
+    } else {
+      dayReviews[date] = { status, verifiedBy: this.state.identity.uid, verifiedByName: this.state.identity.name, verifiedAt: new Date().toISOString() };
+    }
+    await updateDoc(doc(db,'steps',uid), { dayReviews });
+    rec.dayReviews = dayReviews;
+    this.render();
+  },
   async runAiAudit(uid, weekIndex){
     const auditKey = uid + ':' + weekIndex;
     this.state.auditResults[auditKey] = { loading:true };
@@ -2635,7 +2666,7 @@ const App = {
           </div>
         </div>
         <div class="wbody" style="margin-bottom:6px;">
-          ${proofs === null ? `<div class="thumb-placeholder">loading…</div>` : (proof ? `<img class="thumb" src="${proof.proof}" data-role="thumb" data-src="${proof.proof}">` : `<div class="thumb-placeholder">no proof</div>`)}
+          ${proofs === null ? `<div class="thumb-placeholder">loading…</div>` : (proof ? `<img class="thumb" src="${proof.proof}" data-role="thumb-review" data-uid="${uid}" data-week="${w}" data-src="${proof.proof}" style="cursor:zoom-in;">` : `<div class="thumb-placeholder">no proof</div>`)}
           <button class="btn btn-sm" data-role="audit-week" data-uid="${uid}" data-week="${w}" ${(!proof || !weekTotal) ? 'disabled' : ''}>🤖 Check with AI</button>
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;">
@@ -2874,6 +2905,40 @@ const App = {
         <img src="${m.src}">
       </div></div>`;
     }
+    // Admin proof review: the full photo next to that week's day-by-day
+    // steps, with a right/wrong toggle per day — so the admin can check the
+    // photo against each claimed day without hunting between the thumbnail
+    // and the table below it. Separate from setWeekReviewStatus()'s
+    // whole-week verdict, which is unaffected by this.
+    if(m.type === 'proofReview'){
+      const rec = this.state.allSteps[m.uid] || { days:{} };
+      const cfg = this.state.config;
+      const dayReviews = rec.dayReviews || {};
+      let dayRows = '';
+      for(let d=0; d<7; d++){
+        const date = this.addDays(cfg.startDate, m.weekIndex*7 + d);
+        const entry = rec.days[date];
+        const dow = new Date(date + 'T00:00:00Z').toLocaleDateString('en-US', { weekday:'short', timeZone:'UTC' });
+        const review = dayReviews[date];
+        const status = review ? review.status : null;
+        dayRows += `<div class="day-review-row">
+          <div class="day-review-date"><span class="dow">${dow}</span> ${this.formatDate(date)}</div>
+          <div class="day-review-steps">${entry ? entry.steps.toLocaleString() + ' steps' : '—'}</div>
+          <div class="day-review-actions">
+            <button class="btn btn-sm${status==='correct' ? ' active-correct' : ''}" data-role="set-day-review" data-uid="${m.uid}" data-date="${date}" data-status="correct">✓ Right</button>
+            <button class="btn btn-sm${status==='incorrect' ? ' active-incorrect' : ''}" data-role="set-day-review" data-uid="${m.uid}" data-date="${date}" data-status="incorrect">✗ Wrong</button>
+          </div>
+        </div>`;
+      }
+      return `<div class="modal-overlay" data-role="modal-overlay"><div class="modal modal-wide">
+        <button class="modal-close" data-role="modal-close">&times;</button>
+        <div class="serif" style="font-size:16px;margin-bottom:12px;">Proof — Week ${m.weekIndex+1}</div>
+        <div class="proof-review-layout">
+          <img class="proof-review-img" src="${m.src}">
+          <div class="proof-review-days">${dayRows}</div>
+        </div>
+      </div></div>`;
+    }
     return '';
   },
 
@@ -2919,6 +2984,8 @@ const App = {
     root.querySelectorAll('[data-role="proof-input"]').forEach(el => el.addEventListener('change', () => this.handleWeekProofFile(Number(el.dataset.week), el)));
     root.querySelectorAll('[data-role="remove-proof"]').forEach(el => el.addEventListener('click', () => this.removeMyProof(Number(el.dataset.week))));
     root.querySelectorAll('[data-role="thumb"]').forEach(el => el.addEventListener('click', () => this.openModal({ type:'image', src: el.dataset.src })));
+    root.querySelectorAll('[data-role="thumb-review"]').forEach(el => el.addEventListener('click', () => this.openModal({ type:'proofReview', uid: el.dataset.uid, weekIndex: Number(el.dataset.week), src: el.dataset.src })));
+    root.querySelectorAll('[data-role="set-day-review"]').forEach(el => el.addEventListener('click', () => this.setDayReview(el.dataset.uid, el.dataset.date, el.dataset.status)));
 
     const startDateBtn = document.getElementById('btn-save-startdate');
     if(startDateBtn) startDateBtn.addEventListener('click', () => {
