@@ -100,13 +100,15 @@ service cloud.firestore {
 
     // Per-user step logs, keyed by uid. Everyone can read (leaderboard/team
     // views need everyone's totals). The owner can write their own days/proof,
-    // but the "verified" audit stamp can only ever be set by an admin — never
-    // by the participant themselves, even by calling Firestore directly.
+    // but the "verified" audit stamp (whole-week) and "dayReviews" (per-day,
+    // from the proof-review modal's right/wrong buttons) can only ever be
+    // set by an admin — never by the participant themselves, even by
+    // calling Firestore directly.
     match /steps/{uid} {
       allow read: if isSignedIn();
-      allow create: if isSelf(uid) && !('verified' in request.resource.data);
+      allow create: if isSelf(uid) && !('verified' in request.resource.data) && !('dayReviews' in request.resource.data);
       allow update: if isAdmin()
-        || (isSelf(uid) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['verified']));
+        || (isSelf(uid) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['verified', 'dayReviews']));
       // Admin-only, and only meaningful pre-launch (see users/{uid} above) —
       // wiped alongside a user's profile when the roster is re-keyed.
       allow delete: if isAdmin();
