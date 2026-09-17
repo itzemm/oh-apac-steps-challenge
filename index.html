@@ -267,7 +267,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/fireba
 import {
   getAuth, signInWithEmailAndPassword, updatePassword,
   onAuthStateChanged, signOut, createUserWithEmailAndPassword,
-  setPersistence, browserSessionPersistence
+  setPersistence, browserSessionPersistence, browserLocalPersistence
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
 import {
   getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, writeBatch
@@ -285,12 +285,6 @@ const firebaseConfig = {
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
 const db = getFirestore(fbApp);
-// Session (per-tab) persistence instead of the default local (shared-across-tabs)
-// persistence: signing out in one tab no longer signs out every other open tab
-// (each tab keeps its own independent auth state, e.g. so an admin can be
-// signed into a second account in another tab). Trade-off: closing a tab
-// signs that tab out — a fresh sign-in is needed next time it's opened.
-setPersistence(auth, browserSessionPersistence).catch(()=>{});
 
 // A second, throwaway Firebase app instance used ONLY to create new Auth
 // accounts. createUserWithEmailAndPassword() signs in as the account it just
@@ -525,6 +519,13 @@ const App = {
     if(profile){
       this.state.identity = { uid: user.uid, name: profile.name, email: profile.email };
       this.state.mustChangePassword = !!profile.mustChangePassword;
+      // Admins get per-tab session persistence (signing out in one tab
+      // doesn't sign out others, so an admin can be signed into a second
+      // account in another tab) — everyone else keeps the default shared
+      // local persistence so they stay signed in like before. Safe to call
+      // after sign-in: it moves the already-authenticated session to the
+      // new storage immediately rather than only affecting future sign-ins.
+      setPersistence(auth, profile.role === 'admin' ? browserSessionPersistence : browserLocalPersistence).catch(()=>{});
       await this.enterApp();
     } else {
       // Signed in with valid credentials, but no admin-provisioned profile
