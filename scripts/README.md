@@ -96,6 +96,23 @@ the 5-person limit), prints their username and initial password the same
 way `import-roster.js` does. Add `--captain` to make them the team's
 captain. Safe to re-run for the same name — it won't create a duplicate.
 
+## Reset someone's password
+
+If a participant forgets their password, there's no self-service reset —
+synthetic `@ohapac.local` addresses can't receive a real password-reset
+email, and there's no backend to expose that to the browser (see "Why a
+local script" below). Reset it back to their username instead:
+
+```bash
+node reset-password.js "Trail_Blazers_Frank_Yeo"
+```
+
+Sets their password back to their exact username and flags their profile
+so the app shows them the change-password reminder again on next login.
+Works for any account, participant or admin — for an admin specifically,
+`setup-admin.js admin_username "Display Name" --reset-password` does the
+same thing while also making sure their profile stays `role: 'admin'`.
+
 ## Delete a participant
 
 ```bash
