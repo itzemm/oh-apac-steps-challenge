@@ -485,6 +485,7 @@ const App = {
     modal: null,
     draftSteps: {},
     editingDays: {},
+    raceExpandedWeeks: {},
     myFunFacts: null,
     myFunFactsFor: null,
     teamFunFacts: null,
@@ -777,6 +778,13 @@ const App = {
     // trigger this bulk, admin-only fetch.
     if(v === 'admin' && !this.state.allStepsLoaded){
       this.loadAllSteps();
+    } else if(v === 'myteam'){
+      // Refreshes everyone's totals so the week race reflects a teammate's
+      // steps as soon as you open this tab, not just whatever was loaded
+      // at login — there's no realtime listener, so this is "current as of
+      // your last visit" rather than a live push while the tab stays open.
+      this.render();
+      this.loadUsers().then(() => this.render());
     } else {
       this.render();
     }
@@ -2174,29 +2182,55 @@ const App = {
     return html;
   },
 
+  // One race block per week that's actually started, newest first (Week 3,
+  // then Week 2, then Week 1) — a week that hasn't started yet is skipped
+  // entirely (no title, nothing), not just collapsed, since there's nothing
+  // to race yet. The current week's race stays open; a finished week's
+  // collapses to a one-line summary you can expand back out, the same
+  // pattern renderWeekCard() uses for a person's own past weeks.
+  renderTeamRaceHistory(team){
+    const cfg = this.state.config;
+    if(this.isPrestart()) return '';
+    let html = '';
+    for(let w = cfg.weeks - 1; w >= 0; w--){
+      const wStatus = this.getWeekStatus(w);
+      if(wStatus === 'future' || wStatus === 'not-started') continue;
+      html += this.renderTeamWeekRace(team, w, wStatus);
+    }
+    return html;
+  },
+  renderTeamWeekRace(team, weekIdx, wStatus){
+    const raceEntries = team.members.map(m => {
+      const u = this.state.users[m];
+      return { name: u ? u.name : m, value: this.userWeekTotal(m, weekIdx) };
+    });
+    const locked = wStatus === 'locked';
+    if(locked && !this.state.raceExpandedWeeks[weekIdx]){
+      const winner = raceEntries.reduce((best, e) => (!best || e.value > best.value) ? e : best, null);
+      return `<div class="panel locked-week" data-role="toggle-race-expand" data-week="${weekIdx}">
+        <div class="locked-week-label">Week ${weekIdx+1} race${winner && winner.value ? `<span class="locked-week-total"> — ${winner.name} led with ${winner.value.toLocaleString()} steps</span>` : ''}</div>
+        <span style="font-size:11px;color:var(--ink-soft);">▼ Expand</span>
+      </div>`;
+    }
+    return `<div class="panel">
+      <h3${locked ? ` data-role="toggle-race-expand" data-week="${weekIdx}" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;"` : ''}>
+        <span>Week ${weekIdx+1} race</span>${locked ? `<span style="font-size:11px;color:var(--ink-soft);font-weight:400;">▲ Collapse</span>` : ''}
+      </h3>
+      <div class="race-row race-axis-row">
+        <div class="race-name"></div>
+        <div class="race-axis"><span>Start</span><span>Finish</span></div>
+      </div>
+      ${this.renderRaceTrack(raceEntries, 'assets/otters/otter-lion.png', { unit:'steps', locked })}
+    </div>`;
+  },
+
   renderTeamRoster(team){
     const prestart = this.isPrestart();
     const isCaptain = team.captainUid === this.state.identity.uid;
     const teamTotal = team.members.reduce((s,m)=> s + this.userTotal(m), 0);
     const funHtml = this.renderFunStats(this.getFunFacts('team', teamTotal, team.id));
 
-    const status = this.getChallengeStatus();
-    let raceHtml = '';
-    if(status.started){
-      const weekIdx = status.ended ? this.state.config.weeks - 1 : status.weekIndex;
-      const raceEntries = team.members.map(m => {
-        const u = this.state.users[m];
-        return { name: u ? u.name : m, value: this.userWeekTotal(m, weekIdx) };
-      });
-      raceHtml = `<div class="panel">
-        <h3>Week ${weekIdx+1} race</h3>
-        <div class="race-row race-axis-row">
-          <div class="race-name"></div>
-          <div class="race-axis"><span>Start</span><span>Finish</span></div>
-        </div>
-        ${this.renderRaceTrack(raceEntries, 'assets/otters/otter-lion.png', { unit:'steps' })}
-      </div>`;
-    }
+    const raceHtml = this.renderTeamRaceHistory(team);
 
     const membersHtml = team.members.map(m => {
       const u = this.state.users[m];
@@ -2235,18 +2269,27 @@ const App = {
   // as more steps come in, since render() re-derives this from live totals.
   // opts.max overrides the leader used for normalization (e.g. the overall
   // #1, when rendering a subset that excludes the actual leader); opts.unit,
-  // when given, shows each entry's raw total under its name.
+  // when given, shows each entry's raw total under its name. opts.locked
+  // === false means this race is still in progress (a team's current week):
+  // the leader is capped short of the finish line — otherwise, since `max`
+  // defaults to the leader's own value, they'd always compute to exactly
+  // 100% and look "arrived" from the very first step of the week. Once the
+  // week is actually over (opts.locked left undefined/true, e.g. the
+  // leaderboard's overall ranking, or a team's past week), the true leader
+  // reaches the finish line for real.
   renderRaceTrack(entries, otterSrc, opts){
     opts = opts || {};
     if(!entries.length) return `<div class="empty">No one in this race yet.</div>`;
     const max = opts.max || Math.max(1, ...entries.map(e=>e.value));
+    const capPct = opts.locked === false ? 90 : 100;
     return entries.map((e, i) => {
-      const pct = Math.min(100, Math.max(2, (e.value/max)*100));
+      const pct = Math.min(capPct, Math.max(2, (e.value/max)*100));
       const delay = (i % 5) * 0.11;
+      const arrived = capPct === 100 && pct >= 100;
       return `<div class="race-row">
         <div class="race-name">${e.name}${opts.unit ? `<div class="race-value">${e.value.toLocaleString()} ${opts.unit}</div>` : ''}</div>
         <div class="race-lane-track">
-          <img class="race-lane-otter" src="${otterSrc}" alt="" style="left:${pct.toFixed(1)}%;animation-delay:${delay.toFixed(2)}s">
+          <img class="race-lane-otter" src="${otterSrc}" alt="" style="left:${pct.toFixed(1)}%;animation-delay:${delay.toFixed(2)}s;${arrived ? 'animation-play-state:paused;' : ''}">
           <div class="race-lane-finish"></div>
         </div>
       </div>`;
@@ -2767,6 +2810,11 @@ const App = {
     root.querySelectorAll('[data-role="toggle-week-expand"]').forEach(el => el.addEventListener('click', () => {
       const w = Number(el.dataset.week);
       this.state.trailExpandedWeeks[w] = !this.state.trailExpandedWeeks[w];
+      this.render();
+    }));
+    root.querySelectorAll('[data-role="toggle-race-expand"]').forEach(el => el.addEventListener('click', () => {
+      const w = Number(el.dataset.week);
+      this.state.raceExpandedWeeks[w] = !this.state.raceExpandedWeeks[w];
       this.render();
     }));
     root.querySelectorAll('[data-role="save-day"]').forEach(el => el.addEventListener('click', () => this.saveDay(el.dataset.date)));
