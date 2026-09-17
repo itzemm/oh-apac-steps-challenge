@@ -1779,15 +1779,28 @@ const App = {
 
   // ---------- Audit & verify ----------
   pickRandomAudit(){
-    const uids = Object.keys(this.state.users);
-    if(!uids.length){ alert('No participants yet.'); return; }
-    const uid = uids[Math.floor(Math.random()*uids.length)];
-    this.openParticipantDetail(uid);
+    // Draws from whatever the admin is currently looking at — everyone, or
+    // (with "Show only missing proof" checked) only those with an issue —
+    // so the pick is always someone actually visible in the table below,
+    // across every team, not just whichever team happens to be expanded.
+    let candidates = Object.values(this.state.users);
+    if(this.state.participantMissingOnly){
+      candidates = candidates.filter(u => this.missingIssues(u).length > 0);
+    }
+    if(!candidates.length){
+      alert(this.state.participantMissingOnly ? 'No one is currently missing proof.' : 'No participants yet.');
+      return;
+    }
+    const u = candidates[Math.floor(Math.random()*candidates.length)];
+    // Force that person's team group open — otherwise their row wouldn't
+    // exist in the DOM at all to expand or scroll to.
+    this.state.expandedParticipantTeams[u.teamId || '__none'] = true;
+    this.openParticipantDetail(u.uid);
     // Give the row a moment to render (and its proof photos to start
     // loading) before scrolling to it — it could be anywhere in a long,
-    // sorted Participants table.
+    // grouped Participants table.
     setTimeout(() => {
-      const row = document.querySelector(`tr[data-uid="${uid}"]`);
+      const row = document.querySelector(`tr[data-uid="${u.uid}"]`);
       if(row) row.scrollIntoView({ block:'center', behavior:'smooth' });
     }, 0);
   },
