@@ -275,7 +275,7 @@ import {
   setPersistence, browserSessionPersistence, browserLocalPersistence
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
 import {
-  getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, writeBatch
+  getFirestore, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, deleteField, collection, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
 
 // ---------- Firebase setup ----------
@@ -653,6 +653,17 @@ const App = {
     this.state.myProofs.weekProof[weekIndex] = entry;
     if(!this.state.mySteps.hasProof) this.state.mySteps.hasProof = {};
     this.state.mySteps.hasProof[weekIndex] = true;
+  },
+  async removeMyProof(weekIndex){
+    if(!confirm("Remove this week's proof photo?")) return;
+    const uid = this.state.identity.uid;
+    const batch = writeBatch(db);
+    batch.set(doc(db,'proofs',uid), { weekProof: { [weekIndex]: deleteField() } }, { merge:true });
+    batch.set(doc(db,'steps',uid), { hasProof: { [weekIndex]: false } }, { merge:true });
+    await batch.commit();
+    if(this.state.myProofs.weekProof) delete this.state.myProofs.weekProof[weekIndex];
+    if(this.state.mySteps.hasProof) this.state.mySteps.hasProof[weekIndex] = false;
+    this.render();
   },
 
   // Admin-only: the full steps collection (daily counts, hasProof flags,
@@ -1220,6 +1231,25 @@ const App = {
     if(!ch.submissions) ch.submissions = {};
     ch.submissions[targetId] = now;
     this.state.myBonusProofs[challengeId] = { proof: dataUrl, submittedAt: now };
+    this.render();
+  },
+  async removeBonusProof(challengeId){
+    const ch = this.state.bonus[challengeId];
+    if(!ch) return;
+    const myTeam = this.getMyTeam();
+    const targetId = ch.type === 'team' ? (myTeam ? myTeam.id : null) : this.state.identity.uid;
+    if(!targetId) return;
+    if(ch.scope === 'week' && Number.isInteger(ch.weekIndex) && this.isPastWeekDeadline(ch.weekIndex)){
+      alert('The deadline for this challenge (Monday noon) has passed — this can no longer be changed.');
+      return;
+    }
+    if(!confirm('Remove your submitted proof photo?')) return;
+    const batch = writeBatch(db);
+    batch.update(doc(db,'bonus',challengeId), { [`submissions.${targetId}`]: deleteField() });
+    batch.update(doc(db,'bonusProofs',targetId), { [challengeId]: deleteField() });
+    await batch.commit();
+    if(ch.submissions) delete ch.submissions[targetId];
+    delete this.state.myBonusProofs[challengeId];
     this.render();
   },
   // Admin-only counterpart to setWeekReviewStatus() — an audit trail on a
@@ -2024,6 +2054,7 @@ const App = {
       proofRow = `<div class="wbody" style="margin-bottom:12px;">
         ${proofEntry ? `<img class="thumb" src="${proofEntry.proof}" data-role="thumb" data-src="${proofEntry.proof}">` : `<div class="thumb-placeholder">no proof</div>`}
         <label class="file-label">${proofEntry ? 'Replace this week’s proof' : 'Upload proof for this week'}<input type="file" accept="image/*" data-week="${weekIndex}" data-role="proof-input"></label>
+        ${proofEntry ? `<button class="btn btn-sm btn-danger" data-week="${weekIndex}" data-role="remove-proof">Remove</button>` : ''}
         ${weekTotal && !proofEntry ? `<span class="tag tag-upcoming">Remember to add proof before the week locks</span>` : ''}
       </div>`;
     } else if(wStatus === 'locked'){
@@ -2124,6 +2155,7 @@ const App = {
         proofSection = `<div class="wbody" style="margin-top:8px;">
           ${thumbHtml}
           <label class="file-label">${submission ? 'Replace your proof photo' : 'Upload proof photo'}<input type="file" accept="image/*" data-bonus="${b.id}" data-role="bonus-proof-input"></label>
+          ${submission ? `<button class="btn btn-sm btn-danger" data-bonus="${b.id}" data-role="remove-bonus-proof">Remove</button>` : ''}
         </div>`;
       } else if(submission){
         proofSection = `<div class="wbody" style="margin-top:8px;">
@@ -2821,6 +2853,7 @@ const App = {
     root.querySelectorAll('[data-role="edit-day"]').forEach(el => el.addEventListener('click', () => this.editDay(el.dataset.date)));
     root.querySelectorAll('[data-role="steps-input"]').forEach(el => el.addEventListener('input', () => this.state.draftSteps[el.dataset.date] = el.value));
     root.querySelectorAll('[data-role="proof-input"]').forEach(el => el.addEventListener('change', () => this.handleWeekProofFile(Number(el.dataset.week), el)));
+    root.querySelectorAll('[data-role="remove-proof"]').forEach(el => el.addEventListener('click', () => this.removeMyProof(Number(el.dataset.week))));
     root.querySelectorAll('[data-role="thumb"]').forEach(el => el.addEventListener('click', () => this.openModal({ type:'image', src: el.dataset.src })));
 
     const startDateBtn = document.getElementById('btn-save-startdate');
@@ -2912,6 +2945,7 @@ const App = {
     root.querySelectorAll('[data-role="delete-bonus"]').forEach(el => el.addEventListener('click', () => this.deleteBonusChallenge(el.dataset.id)));
     root.querySelectorAll('[data-role="toggle-award"]').forEach(el => el.addEventListener('click', () => this.toggleAward(el.dataset.id, el.dataset.target)));
     root.querySelectorAll('[data-role="bonus-proof-input"]').forEach(el => el.addEventListener('change', () => this.handleBonusProofFile(el.dataset.bonus, el)));
+    root.querySelectorAll('[data-role="remove-bonus-proof"]').forEach(el => el.addEventListener('click', () => this.removeBonusProof(el.dataset.bonus)));
     root.querySelectorAll('[data-role="load-bonus-proofs"]').forEach(el => el.addEventListener('click', () => this.loadBonusProofsFor(el.dataset.id)));
     root.querySelectorAll('[data-role="audit-bonus"]').forEach(el => el.addEventListener('click', () => this.runBonusAiAudit(el.dataset.id, el.dataset.target)));
     root.querySelectorAll('[data-role="set-bonus-review"]').forEach(el => el.addEventListener('click', () => this.setBonusReviewStatus(el.dataset.id, el.dataset.target, el.dataset.status || null)));
