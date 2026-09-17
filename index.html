@@ -864,6 +864,16 @@ const App = {
   weekProofOf(record, weekIndex){
     return record && record.weekProof ? record.weekProof[weekIndex] : null;
   },
+  // A week-scoped bonus challenge only shows to participants during its own
+  // week; an overall-scoped one always shows. Admins still see everything
+  // in the Manage & award list regardless of week, since they need to set
+  // up or review challenges outside the current week too.
+  isBonusVisibleNow(b){
+    if(b.scope !== 'week') return true;
+    const status = this.getChallengeStatus();
+    if(!status.started) return false;
+    return b.weekIndex === status.weekIndex;
+  },
   // Reads a participant's precomputed total/byWeek straight off their
   // users/{uid} doc (already fetched at boot for everyone) — used by
   // Leaderboard and My Team so those views never need to bulk-fetch the
@@ -1914,7 +1924,7 @@ const App = {
     const funHtml = this.renderFunStats(this.getFunFacts('my', myTotal));
 
     const myTeam = this.getMyTeam();
-    const bonusList = Object.values(this.state.bonus).filter(b => b.active !== false);
+    const bonusList = Object.values(this.state.bonus).filter(b => b.active !== false && this.isBonusVisibleNow(b));
     let bonusHtml = '';
     if(bonusList.length){
       bonusHtml = `<div class="panel"><h3>Bonus challenges available</h3>` + bonusList.map(b => {
@@ -2138,7 +2148,7 @@ const App = {
       </div>`;
     }).join('');
 
-    const bonusList = Object.values(this.state.bonus).filter(b => b.type==='team' && b.active !== false);
+    const bonusList = Object.values(this.state.bonus).filter(b => b.type==='team' && b.active !== false && this.isBonusVisibleNow(b));
     let bonusHtml = '';
     if(bonusList.length){
       bonusHtml = `<div class="panel"><h3>Bonus challenges for your team</h3>` + bonusList.map(b => this.renderBonusCard(b, team.id, null)).join('') + `</div>`;
