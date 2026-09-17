@@ -328,16 +328,6 @@ function usernameToEmail(username){
   return username.trim().toLowerCase().replace(/\s+/g, '_') + USERNAME_EMAIL_DOMAIN;
 }
 
-// The Gemini API key for AI proof-photo audits. This is genuinely visible to
-// anyone who views this public repo's source — there is no backend holding it
-// server-side. That's an accepted tradeoff (see README's "AI proof-photo
-// audits" section): replace this with your OWN key, then in Google Cloud
-// Console lock it down to (a) only the Generative Language API, (b) only HTTP
-// referrers matching your site's actual domain(s), and (c) a low daily quota
-// cap — so a scraped key can burn a little quota at worst, not run up a bill
-// or be reused elsewhere.
-const GEMINI_API_KEY = 'REPLACE_WITH_YOUR_OWN_RESTRICTED_GEMINI_KEY';
-
 // A reviewed week's status: 'verified' | 'rejected' | 'needs_review', or no
 // entry at all for "pending" (not reviewed yet). Colors follow Excel's
 // classic Good/Bad/Neutral conditional-formatting palette, plus a grey for
@@ -508,7 +498,6 @@ const App = {
     myFunFactsFor: null,
     teamFunFacts: null,
     teamFunFactsFor: null,
-    auditResults: {},
     trailExpandedWeeks: {},
     viewedBonusProofs: {},
     bonusForm: { title:'', description:'', points:'', type:'individual', requirePhoto:false, scope:'overall', weekIndex:0 },
@@ -1312,50 +1301,6 @@ const App = {
     this.state.viewedBonusProofs[challengeId] = results;
     this.render();
   },
-  async runBonusAiAudit(challengeId, targetId){
-    const auditKey = 'bonus:' + challengeId + ':' + targetId;
-    this.state.auditResults[auditKey] = { loading:true };
-    this.render();
-    try{
-      const ch = this.state.bonus[challengeId];
-      const proofs = this.state.viewedBonusProofs[challengeId] || {};
-      const proofEntry = proofs[targetId];
-      if(!proofEntry) throw new Error('No proof photo uploaded.');
-      const match = /^data:([^;]+);base64,(.*)$/s.exec(proofEntry.proof);
-      if(!match) throw new Error('Could not read the proof image.');
-      const [, mimeType, imageBase64] = match;
-
-      const prompt = `You are auditing a bonus challenge submission in a workplace step-count challenge. The challenge is "${ch.title}"${ch.description ? ' — ' + ch.description : ''}. A participant submitted this photo as proof they completed it. Look closely at the photo and judge whether it plausibly supports having completed this specific challenge. Respond with ONLY JSON in this exact shape, no other text: {"summary": "one sentence overview", "plausible": true or false, "concerns": "short description of anything that looks off, or an empty string if it looks fine"}`;
-
-      const geminiRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{
-              parts: [
-                { text: prompt },
-                { inline_data: { mime_type: mimeType || 'image/jpeg', data: imageBase64 } }
-              ]
-            }],
-            generationConfig: { temperature: 0, responseMimeType: 'application/json' }
-          })
-        }
-      );
-      const geminiData = await geminiRes.json();
-      if(!geminiRes.ok) throw new Error(geminiData?.error?.message || 'Gemini request failed.');
-      const raw = (geminiData.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
-
-      let parsed;
-      try{ parsed = JSON.parse(raw); }
-      catch(e){ throw new Error("Couldn't parse the AI's response."); }
-      this.state.auditResults[auditKey] = { loading:false, result:parsed };
-    }catch(e){
-      this.state.auditResults[auditKey] = { loading:false, error: e.message || 'Audit failed.' };
-    }
-    this.render();
-  },
   async toggleBonusActive(id){
     const next = !this.state.bonus[id].active;
     await updateDoc(doc(db,'bonus',id), { active: next });
@@ -1802,7 +1747,6 @@ const App = {
     this.state.viewedProofs = {};
     this.state.allProofs = {};
     this.state.allProofsLoaded = false;
-    this.state.auditResults = {};
     this.render();
   },
 
@@ -1867,58 +1811,6 @@ const App = {
     rec.dayReviews = dayReviews;
     this.render();
   },
-  async runAiAudit(uid, weekIndex){
-    const auditKey = uid + ':' + weekIndex;
-    this.state.auditResults[auditKey] = { loading:true };
-    this.render();
-    try{
-      const rec = this.state.allSteps[uid];
-      const proofs = await this.loadProofsFor(uid);
-      const proofEntry = this.weekProofOf(proofs, weekIndex);
-      if(!proofEntry) throw new Error('No proof photo uploaded for this week.');
-      const match = /^data:([^;]+);base64,(.*)$/s.exec(proofEntry.proof);
-      if(!match) throw new Error('Could not read the proof image.');
-      const [, mimeType, imageBase64] = match;
-
-      const cfg = this.state.config;
-      const claims = [];
-      for(let d=0; d<7; d++){
-        const date = this.addDays(cfg.startDate, weekIndex*7 + d);
-        const entry = rec.days[date];
-        claims.push({ date, claimedSteps: entry ? entry.steps : null });
-      }
-      const prompt = `You are auditing a workplace step-count challenge. A participant uploaded this photo as proof for the week of ${claims[0].date} to ${claims[6].date}. They separately logged these daily step counts themselves: ${JSON.stringify(claims)}. Look closely at the photo (it's likely a phone health app or pedometer screenshot) and identify any step counts and dates it actually shows. Compare what you see against what they logged. Respond with ONLY JSON in this exact shape, no other text: {"summary": "one sentence overview", "flags": [{"date": "YYYY-MM-DD", "claimedSteps": number or null, "seenInPhoto": number or null, "issue": "short description of the mismatch, or an empty string if that date matches or the photo doesn't cover it"}]}. Include one entry in "flags" for every date listed above.`;
-
-      const geminiRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{
-              parts: [
-                { text: prompt },
-                { inline_data: { mime_type: mimeType || 'image/jpeg', data: imageBase64 } }
-              ]
-            }],
-            generationConfig: { temperature: 0, responseMimeType: 'application/json' }
-          })
-        }
-      );
-      const geminiData = await geminiRes.json();
-      if(!geminiRes.ok) throw new Error(geminiData?.error?.message || 'Gemini request failed.');
-      const raw = (geminiData.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
-
-      let parsed;
-      try{ parsed = JSON.parse(raw); }
-      catch(e){ throw new Error("Couldn't parse the AI's response."); }
-      this.state.auditResults[auditKey] = { loading:false, result:parsed };
-    }catch(e){
-      this.state.auditResults[auditKey] = { loading:false, error: e.message || 'Audit failed.' };
-    }
-    this.render();
-  },
-
   openModal(modal){
     this.state.modal = modal;
     this.render();
@@ -2640,23 +2532,6 @@ const App = {
         }
       }
 
-      const auditKey = uid + ':' + w;
-      const audit = this.state.auditResults[auditKey];
-      let auditHtml = '';
-      if(audit && audit.loading){
-        auditHtml = `<div class="loading" style="padding:8px 0;">Checking photo against logged steps…</div>`;
-      } else if(audit && audit.error){
-        auditHtml = `<div class="notice" style="margin:10px 0;">${audit.error}</div>`;
-      } else if(audit && audit.result){
-        const flags = (audit.result.flags || []).filter(f => f.issue);
-        auditHtml = `<div style="margin:10px 0;font-size:13px;">
-          ${audit.result.summary ? `<div style="margin-bottom:6px;color:var(--ink-soft);">${audit.result.summary}</div>` : ''}
-          ${flags.length
-            ? flags.map(f => `<div class="tag tag-flag" style="display:block;margin-bottom:4px;">⚠ ${f.date}: claimed ${f.claimedSteps ?? '—'}, photo shows ${f.seenInPhoto ?? 'unclear'} — ${f.issue}</div>`).join('')
-            : `<span class="tag tag-awarded">No mismatches found</span>`}
-        </div>`;
-      }
-
       weekBlocks += `<div class="week-card" style="margin-top:12px;">
         <div class="wtop">
           <div><span class="wname">Week ${w+1}</span></div>
@@ -2667,14 +2542,12 @@ const App = {
         </div>
         <div class="wbody" style="margin-bottom:6px;">
           ${proofs === null ? `<div class="thumb-placeholder">loading…</div>` : (proof ? `<img class="thumb" src="${proof.proof}" data-role="thumb-review" data-uid="${uid}" data-week="${w}" data-src="${proof.proof}" style="cursor:zoom-in;">` : `<div class="thumb-placeholder">no proof</div>`)}
-          <button class="btn btn-sm" data-role="audit-week" data-uid="${uid}" data-week="${w}" ${(!proof || !weekTotal) ? 'disabled' : ''}>🤖 Check with AI</button>
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;">
           ${['verified','needs_review','rejected'].map(s => `<button class="btn btn-sm" data-role="set-review" data-uid="${uid}" data-week="${w}" data-status="${s}"
             style="${reviewStatus===s ? `background:${REVIEW_STATUS_META[s].bg};border-color:${REVIEW_STATUS_META[s].bg};color:${REVIEW_STATUS_META[s].fg};` : ''}">${REVIEW_STATUS_META[s].short}</button>`).join('')}
           ${review ? `<button class="btn btn-sm" data-role="set-review" data-uid="${uid}" data-week="${w}" data-status="">Clear</button>` : ''}
         </div>
-        ${auditHtml}
         ${dayRows ? `<table><thead><tr><th>Day</th><th>Steps</th></tr></thead><tbody>${dayRows}</tbody></table>` : ''}
       </div>`;
     }
@@ -2853,31 +2726,16 @@ const App = {
           const review = reviews[t.id];
           const proof = proofs[t.id];
           const reviewStatus = review ? review.status : 'pending';
-          const auditKey = 'bonus:' + b.id + ':' + t.id;
-          const audit = this.state.auditResults[auditKey];
-          let auditHtml = '';
-          if(audit && audit.loading){
-            auditHtml = `<div class="loading" style="padding:6px 0;">Checking photo…</div>`;
-          } else if(audit && audit.error){
-            auditHtml = `<div class="notice" style="margin:6px 0;">${audit.error}</div>`;
-          } else if(audit && audit.result){
-            auditHtml = `<div style="margin:6px 0;font-size:12px;color:var(--ink-soft);">
-              ${audit.result.summary || ''}
-              ${audit.result.concerns ? `<div class="tag tag-flag" style="display:inline-block;margin-top:4px;">⚠ ${audit.result.concerns}</div>` : (audit.result.plausible ? `<span class="tag tag-awarded" style="margin-left:4px;">Looks plausible</span>` : '')}
-            </div>`;
-          }
           html += `<div class="week-card" style="margin-bottom:10px;">
             <div class="wtop"><div><span class="wname">${t.name}</span></div><span class="status-pill status-${reviewStatus}">${REVIEW_STATUS_META[reviewStatus].label}</span></div>
             <div class="wbody" style="margin-bottom:6px;">
               ${proof ? `<img class="thumb" src="${proof.proof}" data-role="thumb" data-src="${proof.proof}">` : `<div class="thumb-placeholder">no proof</div>`}
-              <button class="btn btn-sm" data-role="audit-bonus" data-id="${b.id}" data-target="${t.id}" ${!proof ? 'disabled' : ''}>🤖 Check with AI</button>
             </div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;">
               ${['verified','needs_review','rejected'].map(s => `<button class="btn btn-sm" data-role="set-bonus-review" data-id="${b.id}" data-target="${t.id}" data-status="${s}"
                 style="${reviewStatus===s ? `background:${REVIEW_STATUS_META[s].bg};border-color:${REVIEW_STATUS_META[s].bg};color:${REVIEW_STATUS_META[s].fg};` : ''}">${REVIEW_STATUS_META[s].short}</button>`).join('')}
               ${review ? `<button class="btn btn-sm" data-role="set-bonus-review" data-id="${b.id}" data-target="${t.id}" data-status="">Clear</button>` : ''}
             </div>
-            ${auditHtml}
           </div>`;
         });
       }
@@ -3044,7 +2902,6 @@ const App = {
 
     root.querySelectorAll('[data-role="toggle-role"]').forEach(el => el.addEventListener('click', () => this.setRole(el.dataset.uid, el.dataset.newrole)));
     root.querySelectorAll('[data-role="view-user"]').forEach(el => el.addEventListener('click', () => this.toggleParticipantDetail(el.dataset.uid)));
-    root.querySelectorAll('[data-role="audit-week"]').forEach(el => el.addEventListener('click', () => this.runAiAudit(el.dataset.uid, Number(el.dataset.week))));
     root.querySelectorAll('[data-role="set-review"]').forEach(el => el.addEventListener('click', () => {
       this.setWeekReviewStatus(el.dataset.uid, Number(el.dataset.week), el.dataset.status || null);
     }));
@@ -3078,7 +2935,6 @@ const App = {
     root.querySelectorAll('[data-role="bonus-proof-input"]').forEach(el => el.addEventListener('change', () => this.handleBonusProofFile(el.dataset.bonus, el)));
     root.querySelectorAll('[data-role="remove-bonus-proof"]').forEach(el => el.addEventListener('click', () => this.removeBonusProof(el.dataset.bonus)));
     root.querySelectorAll('[data-role="load-bonus-proofs"]').forEach(el => el.addEventListener('click', () => this.loadBonusProofsFor(el.dataset.id)));
-    root.querySelectorAll('[data-role="audit-bonus"]').forEach(el => el.addEventListener('click', () => this.runBonusAiAudit(el.dataset.id, el.dataset.target)));
     root.querySelectorAll('[data-role="set-bonus-review"]').forEach(el => el.addEventListener('click', () => this.setBonusReviewStatus(el.dataset.id, el.dataset.target, el.dataset.status || null)));
     root.querySelectorAll('[data-role="bonus-filter"]').forEach(input => {
       input.addEventListener('input', () => {
