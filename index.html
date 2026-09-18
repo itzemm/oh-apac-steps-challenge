@@ -106,18 +106,27 @@ img{max-width:100%;}
   background:linear-gradient(180deg,var(--forest-tint) 0%,#D9A3A8 55%,#B96A70 100%);
   border:1px solid var(--line);overflow:visible;z-index:0;}
 .race-lane-otter{position:absolute;top:2px;width:48px;height:48px;object-fit:contain;
-  transform:translateX(-50%);transition:left 0.6s ease;z-index:2;
-  filter:drop-shadow(0 2px 2px rgba(0,0,0,0.25));animation:otter-walk 0.6s ease-in-out infinite;}
+  transform:translateX(-50%) scaleX(-1);transition:left 0.6s ease;z-index:2;
+  filter:drop-shadow(0 2px 2px rgba(0,0,0,0.25));animation:otter-walk-flipped 0.6s ease-in-out infinite;}
 /* A waddling walk cycle using just rotation/bob on the static artwork (no
    sprite frames to animate between) — folds translateX(-50%) into every
    keyframe since that's how both otter classes stay centered on their
    position, and an animation's transform replaces rather than composes with
-   the base rule's. */
+   the base rule's. The race track's otter also mirrors horizontally
+   (scaleX(-1)) so it faces right, the direction it's racing — its own
+   keyframe set bakes that in too, with the wobble's rotate sign flipped so
+   it still *looks* like the same wobble once mirrored. */
 @keyframes otter-walk{
   0%,100%{transform:translateX(-50%) translateY(0) rotate(0deg);}
   25%{transform:translateX(-50%) translateY(-4px) rotate(-6deg);}
   50%{transform:translateX(-50%) translateY(0) rotate(0deg);}
   75%{transform:translateX(-50%) translateY(-4px) rotate(6deg);}
+}
+@keyframes otter-walk-flipped{
+  0%,100%{transform:translateX(-50%) scaleX(-1) translateY(0) rotate(0deg);}
+  25%{transform:translateX(-50%) scaleX(-1) translateY(-4px) rotate(6deg);}
+  50%{transform:translateX(-50%) scaleX(-1) translateY(0) rotate(0deg);}
+  75%{transform:translateX(-50%) scaleX(-1) translateY(-4px) rotate(-6deg);}
 }
 @media (prefers-reduced-motion: reduce){
   .trail-otter,.race-lane-otter{animation:none;}
