@@ -312,7 +312,7 @@ table.roster td{padding:9px 8px;border-bottom:1px solid var(--line);vertical-ali
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
 import {
-  getAuth, signInWithEmailAndPassword, updatePassword,
+  getAuth, signInWithEmailAndPassword,
   onAuthStateChanged, signOut, createUserWithEmailAndPassword,
   setPersistence, browserSessionPersistence, browserLocalPersistence
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
@@ -493,7 +493,6 @@ const App = {
     authUser: null,
     identity: null,
     notRegistered: false,
-    mustChangePassword: false,
     signingIn: false,
     config: null,
     users: {},
@@ -549,7 +548,6 @@ const App = {
       this.state.identity = null;
       this.state.mySteps = null;
       this.state.notRegistered = false;
-      this.state.mustChangePassword = false;
       this.state.booting = false;
       this.render();
       return;
@@ -563,7 +561,6 @@ const App = {
     const profile = this.state.users[user.uid];
     if(profile){
       this.state.identity = { uid: user.uid, name: profile.name, email: profile.email };
-      this.state.mustChangePassword = !!profile.mustChangePassword;
       // Admins get per-tab session persistence (signing out in one tab
       // doesn't sign out others, so an admin can be signed into a second
       // account in another tab) — everyone else keeps the default shared
@@ -782,24 +779,6 @@ const App = {
       this.render();
     }
   },
-  async changePassword(newPassword, confirmPassword){
-    if(!newPassword || newPassword.length < 8){ this.state.error = 'Use at least 8 characters.'; this.render(); return; }
-    if(newPassword !== confirmPassword){ this.state.error = 'Passwords don’t match.'; this.render(); return; }
-    this.state.error = null;
-    try{
-      await updatePassword(auth.currentUser, newPassword);
-      await updateDoc(doc(db,'users',this.state.identity.uid), { mustChangePassword:false });
-      this.state.mustChangePassword = false;
-      this.state.modal = null;
-      this.render();
-    }catch(e){
-      this.state.error = e.code === 'auth/requires-recent-login'
-        ? 'For security, sign out and sign in again before changing your password.'
-        : 'Could not update your password. Please try again.';
-      this.render();
-    }
-  },
-
   async enterApp(){
     await this.loadMySteps();
     await this.loadMyBonusProofs();
@@ -1582,7 +1561,7 @@ const App = {
     }finally{
       await signOut(provisioningAuth).catch(()=>{});
     }
-    const profile = { name, email, country:'', provider:'password', role, joinedAt:new Date().toISOString(), teamId, mustChangePassword:true };
+    const profile = { name, email, country:'', provider:'password', role, joinedAt:new Date().toISOString(), teamId };
     await setDoc(doc(db,'users',uid), profile);
     this.state.users[uid] = { uid, ...profile };
     return { uid, created:true };
@@ -1605,7 +1584,7 @@ const App = {
     try{
       const { uid, created } = await this.ensureUserClient(displayName, username, null, 'admin');
       this.state.adminCreateMsg = { type:'success', text: created
-        ? `Created admin account for ${displayName}. Username: ${username} — initial password: ${username} (they'll be prompted to change it on first login).`
+        ? `Created admin account for ${displayName}. Username: ${username} — password: ${username}.`
         : `${displayName} already had an account under "${username}" — made sure it's an admin.` };
     }catch(e){
       this.state.adminCreateMsg = { type:'error', text: e.message };
@@ -1930,14 +1909,10 @@ const App = {
       <div class="header">
         <div>
           <div class="title serif"><img class="header-logo" src="assets/otters/otter-lion.png" alt="">${cfg.name || 'OH APAC Steps Challenge'}</div>
-          <div class="who">${this.state.identity.name} &nbsp;·&nbsp; <button id="btn-open-change-password">change password</button> &nbsp;·&nbsp; <button id="btn-switch">sign out</button></div>
+          <div class="who">${this.state.identity.name} &nbsp;·&nbsp; <button id="btn-switch">sign out</button></div>
         </div>
         <div class="status-pill">${statusLabel}</div>
       </div>
-      ${this.state.mustChangePassword ? `<div class="notice" style="margin:0 0 12px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
-        <span>You're signed in with a temporary password.</span>
-        <button class="btn btn-sm" id="btn-nudge-change-password">Change it now</button>
-      </div>` : ''}
       <div class="tabs">
         <div class="tab ${this.state.view==='trail'?'active':''}" data-view="trail">My trail</div>
         <div class="tab ${this.state.view==='myteam'?'active':''}" data-view="myteam">My team</div>
@@ -2643,7 +2618,7 @@ const App = {
     const msg = this.state.adminCreateMsg;
     html += `<div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line);">
       <h4 style="margin:0 0 8px;font-size:14px;">Create a brand-new admin account</h4>
-      <div style="font-size:12px;color:var(--ink-soft);margin-bottom:8px;">For someone who doesn't have a participant account yet. Creates a login with username <code>admin_name</code> (e.g. "Maya" → <code>admin_maya</code>) and an initial password that's the same as the username — they'll be prompted to change it on first login.</div>
+      <div style="font-size:12px;color:var(--ink-soft);margin-bottom:8px;">For someone who doesn't have a participant account yet. Creates a login with username <code>admin_name</code> (e.g. "Maya" → <code>admin_maya</code>) and a password that's the same as the username.</div>
       ${msg ? `<div class="notice" style="${msg.type==='error' ? 'background:var(--rust-tint);color:var(--rust);' : ''}margin-bottom:8px;">${msg.text}</div>` : ''}
       <div class="form-inline">
         <div class="field" style="margin-bottom:0;flex:1;min-width:160px;"><label>Name</label><input type="text" id="in-new-admin-name" placeholder="Maya"></div>
@@ -2797,7 +2772,7 @@ const App = {
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink-soft);margin-bottom:8px;"><input type="checkbox" id="in-part-captain" ${f.captain?'checked':''}> Make captain</label>
         <button class="btn btn-primary" id="btn-add-participant">Add</button>
       </div>
-      <div style="font-size:12px;color:var(--ink-soft);margin-top:8px;">Creates a new team if it doesn't exist yet (up to 5 people per team). Leave team name blank to create the account with no team — assign one afterward from the "Team" dropdown in the Participants table below. Their username and initial password are shown here once added — the app shows them a reminder to change it, without blocking them from using it as-is.</div>
+      <div style="font-size:12px;color:var(--ink-soft);margin-top:8px;">Creates a new team if it doesn't exist yet (up to 5 people per team). Leave team name blank to create the account with no team — assign one afterward from the "Team" dropdown in the Participants table below. Their username and password (the same as the username) are shown here once added.</div>
     </div>`;
 
     html += `<div class="panel">
@@ -2938,16 +2913,6 @@ const App = {
 
   renderModal(){
     const m = this.state.modal;
-    if(m.type === 'changePassword'){
-      return `<div class="modal-overlay" data-role="modal-overlay"><div class="modal">
-        <button class="modal-close" data-role="modal-close">&times;</button>
-        <div class="serif" style="font-size:18px;margin-bottom:10px;">Change password</div>
-        ${this.state.error ? `<div class="notice">${this.state.error}</div>` : ''}
-        <div class="field"><label for="in-newpass">New password</label><input id="in-newpass" type="password" autocomplete="new-password"></div>
-        <div class="field"><label for="in-newpass2">Confirm new password</label><input id="in-newpass2" type="password" autocomplete="new-password"></div>
-        <button class="btn btn-primary btn-block" id="btn-change-password">Set password</button>
-      </div></div>`;
-    }
     if(m.type === 'image'){
       return `<div class="modal-overlay" data-role="modal-overlay"><div class="modal">
         <button class="modal-close" data-role="modal-close">&times;</button>
@@ -2997,19 +2962,6 @@ const App = {
 
     const switchBtn = document.getElementById('btn-switch');
     if(switchBtn) switchBtn.addEventListener('click', () => this.switchIdentity());
-    const openChangePassBtn = document.getElementById('btn-open-change-password');
-    if(openChangePassBtn) openChangePassBtn.addEventListener('click', () => { this.state.error = null; this.openModal({ type:'changePassword' }); });
-    const nudgeChangePassBtn = document.getElementById('btn-nudge-change-password');
-    if(nudgeChangePassBtn) nudgeChangePassBtn.addEventListener('click', () => { this.state.error = null; this.openModal({ type:'changePassword' }); });
-    const changePassBtn = document.getElementById('btn-change-password');
-    if(changePassBtn){
-      const submit = () => this.changePassword(
-        document.getElementById('in-newpass').value,
-        document.getElementById('in-newpass2').value
-      );
-      changePassBtn.addEventListener('click', submit);
-      document.getElementById('in-newpass2').addEventListener('keydown', e => { if(e.key==='Enter') submit(); });
-    }
 
     root.querySelectorAll('.tab').forEach(el => el.addEventListener('click', () => this.setView(el.dataset.view)));
     root.querySelectorAll('.subtab').forEach(el => el.addEventListener('click', () => { this.state.lbTab = el.dataset.lb; this.render(); }));
