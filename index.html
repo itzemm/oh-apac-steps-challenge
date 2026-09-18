@@ -1442,37 +1442,42 @@ const App = {
     URL.revokeObjectURL(url);
   },
   // One consolidated export in place of the old separate participants/teams/
-  // missing-proof CSVs: every participant's name, team, daily steps, total,
-  // and whether each week's proof was ever reviewed ("audited").
+  // missing-proof CSVs: every participant's name, team, and steps/audit
+  // trail — grouped week by week (that week's daily steps, its total, then
+  // its proof/audit columns) rather than all daily steps first and every
+  // week's audit status tacked on at the end, so a whole week reads left to
+  // right as one block.
   exportAllDataCSV(){
     const cfg = this.state.config;
-    const totalDays = cfg.weeks * 7;
     const header = ['Name','Email','Country','Team','Role'];
-    for(let i=0; i<totalDays; i++){
-      header.push(cfg.startDate ? this.formatDate(this.addDays(cfg.startDate, i)) : `Day ${i+1}`);
+    for(let w=0; w<cfg.weeks; w++){
+      for(let d=0; d<7; d++){
+        const dayIndex = w*7 + d;
+        header.push(cfg.startDate ? this.formatDate(this.addDays(cfg.startDate, dayIndex)) : `Week ${w+1} Day ${d+1}`);
+      }
+      header.push(`Week ${w+1} Total Steps`, `Week ${w+1} Proof`, `Week ${w+1} Audited`);
     }
-    header.push('Total Steps');
-    for(let w=0; w<cfg.weeks; w++) header.push(`Week ${w+1} Proof`, `Week ${w+1} Audited`);
-    header.push('Bonus Steps','Overall Steps');
+    header.push('Total Steps','Bonus Steps','Overall Steps');
     const rows = [header];
     Object.values(this.state.users).forEach(u => {
       const rec = this.state.allSteps[u.uid] || { days:{}, hasProof:{}, verified:{} };
       const teamName = u.teamId && this.state.teams[u.teamId] ? this.state.teams[u.teamId].name : '';
       const row = [u.name, u.email, u.country||'', teamName, u.role];
-      for(let i=0; i<totalDays; i++){
-        const date = cfg.startDate ? this.addDays(cfg.startDate, i) : null;
-        const entry = date ? rec.days[date] : null;
-        row.push(entry ? entry.steps : '');
-      }
-      const total = this.totalStepsOf(rec);
-      row.push(total);
       for(let w=0; w<cfg.weeks; w++){
+        for(let d=0; d<7; d++){
+          const dayIndex = w*7 + d;
+          const date = cfg.startDate ? this.addDays(cfg.startDate, dayIndex) : null;
+          const entry = date ? rec.days[date] : null;
+          row.push(entry ? entry.steps : '');
+        }
+        const weekTotal = this.totalStepsInRange(rec, w);
         const hasProof = rec.hasProof && rec.hasProof[w];
         const review = rec.verified && rec.verified[w];
-        row.push(hasProof ? 'Yes' : 'No', review ? REVIEW_STATUS_META[review.status].label : 'Not audited');
+        row.push(weekTotal || '', hasProof ? 'Yes' : 'No', review ? REVIEW_STATUS_META[review.status].label : 'Not audited');
       }
+      const total = this.totalStepsOf(rec);
       const bonus = this.individualBonusPoints(u.uid);
-      row.push(bonus, total+bonus);
+      row.push(total, bonus, total+bonus);
       rows.push(row);
     });
     this.downloadCSV('all-data.csv', rows);
