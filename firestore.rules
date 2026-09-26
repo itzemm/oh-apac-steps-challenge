@@ -13,6 +13,13 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
+    // Used by bonusProofs/{id} below to confirm the caller is actually ON
+    // team `teamId`, not just that a team with that id happens to exist.
+    function isTeamMember(teamId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/teams/$(teamId))
+        && request.auth.uid in get(/databases/$(database)/documents/teams/$(teamId)).data.members;
+    }
 
     // Challenge-wide settings (name, start date, weeks, step limit). Admin-only
     // writes; never deletable (there's no legitimate reason to delete this doc —
@@ -49,14 +56,18 @@ service cloud.firestore {
 
     // Teams are provisioned the same way as users (see above) — only an admin
     // may create one. Once created, any signed-in participant may update a
-    // team (leave/remove-member touch the team doc) without a backend.
-    // Deleting is only ever allowed once a team is already empty (the app
-    // clears `members` to [] right before deleting it when the last person
-    // leaves) — this stops anyone from deleting an active team full of people.
+    // team (leave/remove-member touch the team doc) without a backend — but
+    // only the `members`/`captainUid` fields those actions actually need to
+    // change, so a participant can't rename another team or otherwise
+    // rewrite fields they have no legitimate reason to touch. Deleting is
+    // only ever allowed once a team is already empty (the app clears
+    // `members` to [] right before deleting it when the last person leaves)
+    // — this stops anyone from deleting an active team full of people.
     match /teams/{teamId} {
       allow read: if isSignedIn();
       allow create: if isAdmin();
-      allow update: if isSignedIn();
+      allow update: if isAdmin()
+        || (isSignedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members','captainUid']));
       allow delete: if isSignedIn() && resource.data.members.size() == 0;
     }
 
@@ -89,12 +100,15 @@ service cloud.firestore {
     // Bonus challenge proof photos, kept out of bonus/{bonusId} (loaded by
     // everyone) the same way proofs/{uid} is kept out of steps/{uid} — see
     // that collection's comment. Keyed by uid for an individual challenge or
-    // by teamId for a team one; either the account it belongs to, any member
-    // of the team it belongs to, or an admin may write it.
+    // by teamId for a team one. Read and write are both scoped to the
+    // account it belongs to, an actual member of the team it belongs to (not
+    // just any signed-in user — isTeamMember() checks real membership), or
+    // an admin: the app itself only ever reads/writes a person's own uid and
+    // their own team's id (see loadMyBonusProofs()/handleBonusProofFile() in
+    // index.html), so nothing legitimate needs broader access than that.
     match /bonusProofs/{id} {
-      allow read: if isSignedIn();
-      allow create, update: if isAdmin() || isSelf(id)
-        || (isSignedIn() && exists(/databases/$(database)/documents/teams/$(id)));
+      allow read: if isAdmin() || isSelf(id) || isTeamMember(id);
+      allow create, update: if isAdmin() || isSelf(id) || isTeamMember(id);
       allow delete: if isAdmin();
     }
 
@@ -119,11 +133,13 @@ service cloud.firestore {
     // tab's per-week breakdown. Photos themselves are only ever fetched one
     // document at a time (a specific participant) or in bulk deliberately
     // (the admin proof gallery / ZIP export), never automatically for
-    // everyone the way steps/{uid} totals used to be. Same read/write shape
-    // as steps/{uid}: owner writes their own, admin can also write (matches
-    // steps/{uid}'s admin-update path) and delete (roster re-key wipes).
+    // everyone the way steps/{uid} totals used to be. Read is scoped to the
+    // owner or an admin — nobody else's proof photo is ever legitimately
+    // read by the app (see loadProofsFor()/loadAllProofs() in index.html,
+    // both admin-only), so there's no reason any other signed-in participant
+    // should be able to fetch it directly.
     match /proofs/{uid} {
-      allow read: if isSignedIn();
+      allow read: if isAdmin() || isSelf(uid);
       allow create: if isSelf(uid);
       allow update: if isAdmin() || isSelf(uid);
       allow delete: if isAdmin();
