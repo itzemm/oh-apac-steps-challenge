@@ -20,6 +20,13 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/teams/$(teamId))
         && request.auth.uid in get(/databases/$(database)/documents/teams/$(teamId)).data.members;
     }
+    // Only the app's designated submitter for a team bonus challenge — see
+    // bonusProofs/{id} below.
+    function isTeamCaptain(teamId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/teams/$(teamId))
+        && get(/databases/$(database)/documents/teams/$(teamId)).data.captainUid == request.auth.uid;
+    }
 
     // Challenge-wide settings (name, start date, weeks, step limit). Admin-only
     // writes; never deletable (there's no legitimate reason to delete this doc —
@@ -100,15 +107,14 @@ service cloud.firestore {
     // Bonus challenge proof photos, kept out of bonus/{bonusId} (loaded by
     // everyone) the same way proofs/{uid} is kept out of steps/{uid} — see
     // that collection's comment. Keyed by uid for an individual challenge or
-    // by teamId for a team one. Read and write are both scoped to the
-    // account it belongs to, an actual member of the team it belongs to (not
-    // just any signed-in user — isTeamMember() checks real membership), or
-    // an admin: the app itself only ever reads/writes a person's own uid and
-    // their own team's id (see loadMyBonusProofs()/handleBonusProofFile() in
-    // index.html), so nothing legitimate needs broader access than that.
+    // by teamId for a team one. Any real member of a team may read its
+    // proof (isTeamMember()), but only that team's captain may write it —
+    // the app only ever shows the upload/remove controls to the captain
+    // (see renderBonusCard() in index.html), and this makes that a real
+    // guarantee rather than just a hidden button.
     match /bonusProofs/{id} {
       allow read: if isAdmin() || isSelf(id) || isTeamMember(id);
-      allow create, update: if isAdmin() || isSelf(id) || isTeamMember(id);
+      allow create, update: if isAdmin() || isSelf(id) || isTeamCaptain(id);
       allow delete: if isAdmin();
     }
 
