@@ -526,7 +526,7 @@ const App = {
     teamFunFactsFor: null,
     trailExpandedWeeks: {},
     viewedBonusProofs: {},
-    bonusForm: { title:'', description:'', reminder:'', points:'', type:'individual', requirePhoto:false, scope:'overall', weekIndex:0, photoWeekIndex:'' },
+    bonusForm: { title:'', description:'', reminder:'', points:'', type:'individual', requirePhoto:false, scope:'overall', weekIndex:0, photoWeekIndex:'', perMemberProof:false },
     participantForm: { teamName:'', personName:'', captain:false },
     participantActionMsg: null,
     rosterImportBusy: false,
@@ -946,6 +946,23 @@ const App = {
     if(!status.started) return false;
     return b.weekIndex === status.weekIndex;
   },
+  // Who the award grid ("Manage & award challenges") targets — unaffected
+  // by perMemberProof, since points always land on the team as a whole for
+  // a team challenge, individual submission or not.
+  awardTargetsFor(b){
+    return b.type === 'individual'
+      ? Object.values(this.state.users).map(u => ({ id:u.uid, name:u.name }))
+      : Object.values(this.state.teams).map(t => ({ id:t.id, name:t.name }));
+  },
+  // Who actually submits proof — the same as awardTargetsFor() unless this
+  // is a perMemberProof team challenge, where every user (not every team)
+  // submits their own photo even though the award itself stays team-level.
+  submissionTargetsFor(b){
+    if(b.type === 'team' && b.perMemberProof){
+      return Object.values(this.state.users).map(u => ({ id:u.uid, name:u.name }));
+    }
+    return this.awardTargetsFor(b);
+  },
   // Reads a participant's precomputed total/byWeek straight off their
   // users/{uid} doc (already fetched at boot for everyone) — used by
   // Leaderboard and My Team so those views never need to bulk-fetch the
@@ -1250,15 +1267,22 @@ const App = {
     // so this stays null for those.
     const photoWeekIndex = (scope === 'overall' && f.photoWeekIndex !== '' && f.photoWeekIndex != null)
       ? Number(f.photoWeekIndex) : null;
+    // Only meaningful for a team challenge with photo proof required: the
+    // points/award still land on the team as a whole (targets, completed,
+    // and the award grid are all still keyed by teamId — see
+    // awardTargetsFor()), but each member submits their own proof photo
+    // individually instead of the team sharing one submission (see
+    // submissionTargetsFor() and renderBonusCard()'s perMember branch).
+    const perMemberProof = f.type === 'team' && !!f.perMemberProof;
     const ref = doc(collection(db,'bonus'));
     const b = {
       id: ref.id, title, description: f.description.trim(), reminder: f.reminder.trim(), points, type: f.type,
-      requirePhoto: !!f.requirePhoto, scope, weekIndex, photoWeekIndex,
+      requirePhoto: !!f.requirePhoto, scope, weekIndex, photoWeekIndex, perMemberProof,
       active: true, createdAt: new Date().toISOString(), completed: [], submissions: {}, reviews: {}
     };
     await setDoc(ref, b);
     this.state.bonus[ref.id] = b;
-    this.state.bonusForm = { title:'', description:'', reminder:'', points:'', type:'individual', requirePhoto:false, scope:'overall', weekIndex:0, photoWeekIndex:'' };
+    this.state.bonusForm = { title:'', description:'', reminder:'', points:'', type:'individual', requirePhoto:false, scope:'overall', weekIndex:0, photoWeekIndex:'', perMemberProof:false };
     this.render();
   },
   // Submitting a proof photo just records a lightweight timestamp on the
@@ -1278,8 +1302,11 @@ const App = {
     const ch = this.state.bonus[challengeId];
     if(!ch) return;
     const myTeam = this.getMyTeam();
-    const targetId = ch.type === 'team' ? (myTeam ? myTeam.id : null) : this.state.identity.uid;
-    if(!targetId){ alert('Join a team first.'); return; }
+    if(ch.type === 'team' && !myTeam){ alert('Join a team first.'); return; }
+    // For a perMemberProof team challenge, each person submits under their
+    // own uid (not the team's id) even though the award is team-level — see
+    // submissionTargetsFor()'s comment.
+    const targetId = (ch.type === 'team' && !ch.perMemberProof) ? myTeam.id : this.state.identity.uid;
     if(ch.scope === 'week' && Number.isInteger(ch.weekIndex) && this.isPastWeekDeadline(ch.weekIndex)){
       alert('The deadline for this challenge (Monday noon) has passed — this can no longer be changed.');
       return;
@@ -1306,8 +1333,8 @@ const App = {
     const ch = this.state.bonus[challengeId];
     if(!ch) return;
     const myTeam = this.getMyTeam();
-    const targetId = ch.type === 'team' ? (myTeam ? myTeam.id : null) : this.state.identity.uid;
-    if(!targetId) return;
+    if(ch.type === 'team' && !myTeam) return;
+    const targetId = (ch.type === 'team' && !ch.perMemberProof) ? myTeam.id : this.state.identity.uid;
     if(ch.scope === 'week' && Number.isInteger(ch.weekIndex) && this.isPastWeekDeadline(ch.weekIndex)){
       alert('The deadline for this challenge (Monday noon) has passed — this can no longer be changed.');
       return;
@@ -2170,7 +2197,14 @@ const App = {
   // (joinPrompt is shown instead of the normal status tag in that case).
   renderBonusCard(b, targetId, joinPrompt){
     const awarded = targetId ? b.completed.includes(targetId) : false;
-    const submission = targetId && b.submissions ? b.submissions[targetId] : null;
+    // Award status (awarded/completed) always tracks targetId — a team's
+    // id for a team challenge, own uid for individual — but for a
+    // perMemberProof team challenge the actual proof submission is tracked
+    // per person, so "have I personally submitted" needs my own uid even
+    // though the card overall is about my team's award.
+    const perMember = b.type === 'team' && b.perMemberProof;
+    const submissionTargetId = perMember ? this.state.identity.uid : targetId;
+    const submission = submissionTargetId && b.submissions ? b.submissions[submissionTargetId] : null;
     const deadlinePassed = b.scope === 'week' && Number.isInteger(b.weekIndex) && this.isPastWeekDeadline(b.weekIndex);
     // For an overall-scope challenge, an admin can restrict the photo-proof
     // window to one specific week (e.g. only collect photos in Week 3) even
@@ -2200,29 +2234,46 @@ const App = {
     // not by a Firestore rule, since there's no backend to hold a stricter
     // server-side check.
     const canEdit = !awarded && !deadlinePassed && !photoWindowNotOpenYet && !photoWindowClosed;
-    const myProof = targetId ? this.state.myBonusProofs[b.id] : null;
+    const myProof = submissionTargetId ? this.state.myBonusProofs[b.id] : null;
     const thumbHtml = myProof ? `<img class="thumb" src="${myProof.proof}" data-role="thumb" data-src="${myProof.proof}">` : '';
+    // For a perMemberProof team challenge, everyone on the team needs to
+    // see how the whole team is doing, not just their own upload — a count
+    // of teammates who've submitted so far, alongside their own control.
+    let progressHtml = '';
+    if(perMember && targetId){
+      const team = this.state.teams[targetId];
+      if(team){
+        const submittedCount = team.members.filter(uid => b.submissions && b.submissions[uid]).length;
+        progressHtml = `<div style="font-size:12px;color:var(--ink-soft);margin-top:6px;">${submittedCount} of ${team.members.length} teammates have submitted</div>`;
+      }
+    }
     let proofSection = '';
     if(!joinPrompt && b.requirePhoto && targetId){
       if(photoWindowNotOpenYet){
-        proofSection = `<div class="wbody" style="margin-top:8px;"><span class="tag tag-upcoming">Photo proof opens during Week ${photoWeekIndex+1}</span></div>`;
+        proofSection = `<div class="wbody" style="margin-top:8px;"><span class="tag tag-upcoming">Photo proof opens during Week ${photoWeekIndex+1}</span></div>${progressHtml}`;
       } else if(canEdit){
         proofSection = `<div class="wbody" style="margin-top:8px;">
           ${thumbHtml}
           <label class="file-label">${submission ? 'Replace your proof photo' : 'Upload proof photo'}<input type="file" accept="image/*" data-bonus="${b.id}" data-role="bonus-proof-input"></label>
           ${submission ? `<button class="btn btn-sm btn-danger" data-bonus="${b.id}" data-role="remove-bonus-proof">Remove</button>` : ''}
-        </div>`;
+        </div>${progressHtml}`;
       } else if(submission){
         proofSection = `<div class="wbody" style="margin-top:8px;">
           ${thumbHtml}
           ${!awarded ? `<span class="tag tag-locked">Deadline passed — can no longer be changed</span>` : ''}
-        </div>`;
+        </div>${progressHtml}`;
       } else if(deadlinePassed || photoWindowClosed){
-        proofSection = `<div class="wbody" style="margin-top:8px;"><span class="tag tag-locked">${photoWindowClosed ? `The Week ${photoWeekIndex+1} photo window has closed` : 'Deadline passed'}</span></div>`;
+        proofSection = `<div class="wbody" style="margin-top:8px;"><span class="tag tag-locked">${photoWindowClosed ? `The Week ${photoWeekIndex+1} photo window has closed` : 'Deadline passed'}</span></div>${progressHtml}`;
       }
     }
+    // Spelled out as "Team points"/"Individual points" (not just "Team"/
+    // "Individual") so it's unambiguous this is about who the points go to
+    // — distinct from perMember's "Individual proof" pill, which is about
+    // who submits, not who gets the points.
+    const pointsBasisLabel = `<span class="type-pill">${b.type==='team' ? 'Team points' : 'Individual points'}</span>`;
+    const proofBasisLabel = perMember ? `<span class="type-pill">Individual proof</span>` : '';
     return `<div class="challenge-card"><div class="ctop">
-      <div><span class="ctitle">${b.title}</span><span class="type-pill">${b.type==='team'?'Team':'Individual'}</span>${scopeLabel}${b.description ? `<div class="cdesc">${b.description}</div>` : ''}${b.reminder ? `<div style="margin-top:4px;font-size:12px;color:#7A5A11;background:var(--amber-tint);padding:3px 8px;border-radius:6px;display:inline-block;">🔔 ${b.reminder}</div>` : ''}</div>
+      <div><span class="ctitle">${b.title}</span>${pointsBasisLabel}${proofBasisLabel}${scopeLabel}${b.description ? `<div class="cdesc">${b.description}</div>` : ''}${b.reminder ? `<div style="margin-top:4px;font-size:12px;color:#7A5A11;background:var(--amber-tint);padding:3px 8px;border-radius:6px;display:inline-block;">🔔 ${b.reminder}</div>` : ''}</div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
         <span class="points-pill">${b.points} steps</span>
         ${statusTag}
@@ -2861,9 +2912,7 @@ const App = {
       html += `<div class="empty">No photo-required bonus challenges yet.</div>`;
     } else {
       challenges.forEach(b => {
-        const targets = b.type === 'individual'
-          ? Object.values(this.state.users).map(u => ({ id:u.uid, name:u.name }))
-          : Object.values(this.state.teams).map(t => ({ id:t.id, name:t.name }));
+        const targets = this.submissionTargetsFor(b);
         const count = Object.keys(b.submissions||{}).length;
         const expanded = !!this.state.expandedBonusPhotoGroups[b.id];
         html += `<div class="locked-week" data-role="toggle-bonus-photo-group" data-id="${b.id}">
@@ -2964,9 +3013,10 @@ const App = {
             ${Array.from({length: cfg.weeks}, (_,w) => `<option value="${w}" ${String(f.photoWeekIndex)===String(w)?'selected':''}>Only Week ${w+1}</option>`).join('')}
           </select>
         </div>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink-soft);margin-bottom:8px;"><input type="checkbox" id="in-bonus-permember" ${f.perMemberProof?'checked':''}> Each team member submits their own proof</label>
         <button class="btn btn-primary" id="btn-add-bonus">Add challenge</button>
       </div>
-      <div style="font-size:12px;color:var(--ink-soft);margin-top:8px;">"Photo window" only matters for a whole-challenge (not week-specific) photo-required challenge — e.g. a challenge that runs the whole event but where you only want to collect photos during Week 3.</div>
+      <div style="font-size:12px;color:var(--ink-soft);margin-top:8px;">"Photo window" only matters for a whole-challenge (not week-specific) photo-required challenge — e.g. a challenge that runs the whole event but where you only want to collect photos during Week 3. "Each team member submits their own proof" only matters for a team challenge — everyone on the team uploads their own photo individually, but the points are still awarded to the whole team at once, not per person.</div>
     </div>`;
 
     const list = Object.values(this.state.bonus).sort((a,b)=> (b.createdAt||'').localeCompare(a.createdAt||''));
@@ -2984,14 +3034,13 @@ const App = {
       return html;
     }
     filteredList.forEach(b => {
-      const targets = b.type === 'individual'
-        ? Object.values(this.state.users).map(u => ({ id:u.uid, name:u.name }))
-        : Object.values(this.state.teams).map(t => ({ id:t.id, name:t.name }));
+      const targets = this.awardTargetsFor(b);
       const scopeLabel = b.scope === 'week' && Number.isInteger(b.weekIndex) ? `<span class="type-pill">Week ${b.weekIndex+1}</span>` : '';
       const photoWeekLabel = b.scope !== 'week' && Number.isInteger(b.photoWeekIndex) ? `<span class="type-pill">Photo: Week ${b.photoWeekIndex+1} only</span>` : '';
+      const perMemberLabel = b.type === 'team' && b.perMemberProof ? `<span class="type-pill">Individual proof</span>` : '';
       html += `<div class="challenge-card">
         <div class="ctop">
-          <div><span class="ctitle">${b.title}</span><span class="type-pill">${b.type==='individual'?'Individual':'Team'}</span>${scopeLabel}${b.requirePhoto?'<span class="type-pill">Photo required</span>':''}${photoWeekLabel}${b.active===false?'<span class="type-pill">Disabled</span>':''}${b.description?`<div class="cdesc">${b.description}</div>`:''}${b.reminder?`<div style="margin-top:4px;font-size:12px;color:#7A5A11;background:var(--amber-tint);padding:3px 8px;border-radius:6px;display:inline-block;">🔔 ${b.reminder}</div>`:''}</div>
+          <div><span class="ctitle">${b.title}</span><span class="type-pill">${b.type==='individual'?'Individual':'Team'}</span>${scopeLabel}${b.requirePhoto?'<span class="type-pill">Photo required</span>':''}${photoWeekLabel}${perMemberLabel}${b.active===false?'<span class="type-pill">Disabled</span>':''}${b.description?`<div class="cdesc">${b.description}</div>`:''}${b.reminder?`<div style="margin-top:4px;font-size:12px;color:#7A5A11;background:var(--amber-tint);padding:3px 8px;border-radius:6px;display:inline-block;">🔔 ${b.reminder}</div>`:''}</div>
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
             <span class="points-pill">${b.points} steps</span>
             <button class="btn btn-sm" data-role="toggle-bonus-active" data-id="${b.id}">${b.active===false?'Enable':'Disable'}</button>
@@ -3003,9 +3052,14 @@ const App = {
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink-soft);"><input type="checkbox" data-role="bonus-awarded-filter"> Show only awarded</label>
         </div>
         <div class="award-grid">
-          ${targets.length ? targets.map(t => `<div class="award-chip ${b.completed.includes(t.id)?'awarded':''}" data-role="toggle-award" data-id="${b.id}" data-target="${t.id}" data-name="${t.name.toLowerCase()}">${b.completed.includes(t.id)?'✓ ':''}${t.name}</div>`).join('') : `<span class="empty" style="padding:0;">No ${b.type==='individual'?'participants':'teams'} yet.</span>`}
+          ${targets.length ? targets.map(t => {
+            const progress = (b.type==='team' && b.perMemberProof && this.state.teams[t.id])
+              ? ` (${this.state.teams[t.id].members.filter(uid => b.submissions && b.submissions[uid]).length}/${this.state.teams[t.id].members.length})`
+              : '';
+            return `<div class="award-chip ${b.completed.includes(t.id)?'awarded':''}" data-role="toggle-award" data-id="${b.id}" data-target="${t.id}" data-name="${t.name.toLowerCase()}">${b.completed.includes(t.id)?'✓ ':''}${t.name}${progress}</div>`;
+          }).join('') : `<span class="empty" style="padding:0;">No ${b.type==='individual'?'participants':'teams'} yet.</span>`}
         </div>
-        ${b.requirePhoto ? this.renderBonusSubmissions(b, targets) : ''}
+        ${b.requirePhoto ? this.renderBonusSubmissions(b, this.submissionTargetsFor(b)) : ''}
       </div>`;
     });
     html += `</div>`;
@@ -3043,9 +3097,12 @@ const App = {
         const groups = {};
         submittedTargets.forEach(t => {
           let teamId, teamName;
-          if(b.type === 'team'){
+          if(b.type === 'team' && !b.perMemberProof){
             teamId = t.id; teamName = t.name;
           } else {
+            // Individual challenge, or a perMemberProof team challenge
+            // where t.id is a uid (not a teamId) even though b.type is
+            // 'team' — either way, group by that person's own team.
             const u = this.state.users[t.id];
             teamId = (u && u.teamId) || '__none';
             teamName = (u && u.teamId && this.state.teams[u.teamId]) ? this.state.teams[u.teamId].name : 'No team';
@@ -3099,16 +3156,18 @@ const App = {
       </div></div>`;
     }
     // Admin bonus-proof review: the full photo titled with who submitted it
-    // (a person's name for an individual challenge, a team's name for a
-    // team one), plus the same verified/needs_review/rejected buttons
+    // (a person's name for an individual challenge or a perMemberProof team
+    // challenge — either way m.targetId is a uid — otherwise a team's name),
+    // plus the same verified/needs_review/rejected buttons
     // renderBonusSubmissions() shows inline — reads the challenge/review
     // fresh off state each render (only bonusId/targetId/src are stored on
     // the modal) so clicking a button here updates the title's status pill
     // immediately without closing the modal.
     if(m.type === 'bonusProofReview'){
       const b = this.state.bonus[m.bonusId];
+      const targetIsUser = b && (b.type === 'individual' || b.perMemberProof);
       const name = b
-        ? (b.type === 'individual' ? (this.state.users[m.targetId]?.name || m.targetId) : (this.state.teams[m.targetId]?.name || m.targetId))
+        ? (targetIsUser ? (this.state.users[m.targetId]?.name || m.targetId) : (this.state.teams[m.targetId]?.name || m.targetId))
         : m.targetId;
       const review = b && b.reviews ? b.reviews[m.targetId] : null;
       const reviewStatus = review ? review.status : 'pending';
@@ -3316,7 +3375,8 @@ const App = {
         requirePhoto: document.getElementById('in-bonus-photo').checked,
         scope: scopeVal === 'overall' ? 'overall' : 'week',
         weekIndex: scopeVal === 'overall' ? 0 : Number(scopeVal.split('-')[1]),
-        photoWeekIndex: document.getElementById('in-bonus-photoweek').value
+        photoWeekIndex: document.getElementById('in-bonus-photoweek').value,
+        perMemberProof: document.getElementById('in-bonus-permember').checked
       };
       this.addBonusChallenge();
     });
