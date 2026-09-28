@@ -536,7 +536,8 @@ const App = {
     expandedParticipantTeams: {},
     adminCreateMsg: null,
     photoCategoryOpen: { steps:false, bonus:false },
-    expandedBonusPhotoGroups: {}
+    expandedBonusPhotoGroups: {},
+    expandedBonusSubmissionTeams: {}
   },
 
   init(){
@@ -1279,10 +1280,6 @@ const App = {
     const myTeam = this.getMyTeam();
     const targetId = ch.type === 'team' ? (myTeam ? myTeam.id : null) : this.state.identity.uid;
     if(!targetId){ alert('Join a team first.'); return; }
-    if(ch.type === 'team' && myTeam.captainUid !== this.state.identity.uid){
-      alert('Only your team captain can submit photo proof.');
-      return;
-    }
     if(ch.scope === 'week' && Number.isInteger(ch.weekIndex) && this.isPastWeekDeadline(ch.weekIndex)){
       alert('The deadline for this challenge (Monday noon) has passed — this can no longer be changed.');
       return;
@@ -1311,10 +1308,6 @@ const App = {
     const myTeam = this.getMyTeam();
     const targetId = ch.type === 'team' ? (myTeam ? myTeam.id : null) : this.state.identity.uid;
     if(!targetId) return;
-    if(ch.type === 'team' && myTeam.captainUid !== this.state.identity.uid){
-      alert('Only your team captain can remove photo proof.');
-      return;
-    }
     if(ch.scope === 'week' && Number.isInteger(ch.weekIndex) && this.isPastWeekDeadline(ch.weekIndex)){
       alert('The deadline for this challenge (Monday noon) has passed — this can no longer be changed.');
       return;
@@ -2188,11 +2181,6 @@ const App = {
     const photoWeekStatus = photoWeekIndex !== null ? this.getWeekStatus(photoWeekIndex) : null;
     const photoWindowNotOpenYet = photoWeekStatus === 'future' || photoWeekStatus === 'not-started';
     const photoWindowClosed = photoWeekStatus === 'locked';
-    // Only a team's captain may submit/replace/remove proof for a team
-    // challenge — everyone else on the team can still see it once submitted.
-    const isTeamChallenge = b.type === 'team';
-    const team = isTeamChallenge && targetId ? this.state.teams[targetId] : null;
-    const isCaptain = !isTeamChallenge || (team && team.captainUid === this.state.identity.uid);
     let statusTag;
     if(joinPrompt){
       statusTag = `<span class="tag tag-upcoming">${joinPrompt}</span>`;
@@ -2216,12 +2204,7 @@ const App = {
     const thumbHtml = myProof ? `<img class="thumb" src="${myProof.proof}" data-role="thumb" data-src="${myProof.proof}">` : '';
     let proofSection = '';
     if(!joinPrompt && b.requirePhoto && targetId){
-      if(!isCaptain){
-        proofSection = `<div class="wbody" style="margin-top:8px;">
-          ${thumbHtml}
-          <span class="tag tag-locked">Only your team captain can submit photo proof</span>
-        </div>`;
-      } else if(photoWindowNotOpenYet){
+      if(photoWindowNotOpenYet){
         proofSection = `<div class="wbody" style="margin-top:8px;"><span class="tag tag-upcoming">Photo proof opens during Week ${photoWeekIndex+1}</span></div>`;
       } else if(canEdit){
         proofSection = `<div class="wbody" style="margin-top:8px;">
@@ -3030,20 +3013,18 @@ const App = {
   },
 
   // Photo-proof submissions for one bonus challenge — targets who've
-  // submitted, each with a lazy-loaded thumbnail (same on-demand fetch
-  // pattern as renderAdminPhotoProof()), and the same verified/needs_review/
-  // rejected review buttons the weekly steps use. Used both inline in
-  // "Manage & award challenges" and inside the "Photo proof" browser's
-  // Bonus challenge category. For an individual challenge, a submitter's
-  // name is clickable (same view-user/toggleParticipantDetail() as the
-  // Participants table) to also see their weekly steps alongside this
-  // proof — there's no equivalent for a team challenge since a team isn't a
-  // single person's steps to show.
+  // submitted, grouped by team (same concept as everywhere else in the
+  // admin tools: a collapsed one-line group per team, expand to see who's
+  // in it) so a wall of photos doesn't get scrolled through flat. Used both
+  // inline in "Manage & award challenges" and inside the "Photo proof"
+  // browser's Bonus challenge category. Clicking a thumbnail opens the
+  // bonusProofReview modal (see renderModal()) with the submitter's name as
+  // a title and the verified/needs_review/rejected buttons right there,
+  // instead of needing to act on a separate row in this list.
   renderBonusSubmissions(b, targets){
     const submissions = b.submissions || {};
     const submittedTargets = targets.filter(t => submissions[t.id]);
     const proofsLoaded = !!this.state.viewedBonusProofs[b.id];
-    const canViewSteps = b.type === 'individual';
     let html = `<div style="margin-top:14px;">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
         <strong style="font-size:13px;">Submitted proof (${submittedTargets.length})</strong>
@@ -3055,23 +3036,52 @@ const App = {
       } else {
         const proofs = this.state.viewedBonusProofs[b.id] || {};
         const reviews = b.reviews || {};
+        // For a team challenge each "group" is just that one team; for an
+        // individual challenge this clusters everyone's submission under
+        // their own team, same as the Participants table and the Steps
+        // category of the Photo proof browser.
+        const groups = {};
         submittedTargets.forEach(t => {
-          const review = reviews[t.id];
-          const proof = proofs[t.id];
-          const reviewStatus = review ? review.status : 'pending';
-          const stepsExpanded = canViewSteps && this.state.expandedParticipant === t.id;
-          html += `<div class="week-card" style="margin-bottom:10px;">
-            <div class="wtop"><div><span class="wname"${canViewSteps ? ` data-role="view-user" data-uid="${t.id}" style="cursor:pointer;text-decoration:underline;"` : ''}>${t.name}</span></div><span class="status-pill status-${reviewStatus}">${REVIEW_STATUS_META[reviewStatus].label}</span></div>
-            <div class="wbody" style="margin-bottom:6px;">
-              ${proof ? `<img class="thumb" src="${proof.proof}" data-role="thumb" data-src="${proof.proof}">` : `<div class="thumb-placeholder">no proof</div>`}
-            </div>
-            <div style="display:flex;gap:6px;flex-wrap:wrap;">
-              ${['verified','needs_review','rejected'].map(s => `<button class="btn btn-sm" data-role="set-bonus-review" data-id="${b.id}" data-target="${t.id}" data-status="${s}"
-                style="${reviewStatus===s ? `background:${REVIEW_STATUS_META[s].bg};border-color:${REVIEW_STATUS_META[s].bg};color:${REVIEW_STATUS_META[s].fg};` : ''}">${REVIEW_STATUS_META[s].short}</button>`).join('')}
-              ${review ? `<button class="btn btn-sm" data-role="set-bonus-review" data-id="${b.id}" data-target="${t.id}" data-status="">Clear</button>` : ''}
-            </div>
-            ${stepsExpanded ? `<div style="margin-top:10px;">${this.renderParticipantWeekBlocks(t.id)}</div>` : ''}
+          let teamId, teamName;
+          if(b.type === 'team'){
+            teamId = t.id; teamName = t.name;
+          } else {
+            const u = this.state.users[t.id];
+            teamId = (u && u.teamId) || '__none';
+            teamName = (u && u.teamId && this.state.teams[u.teamId]) ? this.state.teams[u.teamId].name : 'No team';
+          }
+          if(!groups[teamId]) groups[teamId] = { teamName, rows: [] };
+          groups[teamId].rows.push(t);
+        });
+        const teamIds = Object.keys(groups).sort((a,c) => {
+          if(a === '__none') return 1;
+          if(c === '__none') return -1;
+          return groups[a].teamName.localeCompare(groups[c].teamName);
+        });
+        teamIds.forEach(teamId => {
+          const group = groups[teamId];
+          const groupKey = `${b.id}:${teamId}`;
+          const groupExpanded = !!this.state.expandedBonusSubmissionTeams[groupKey];
+          html += `<div class="locked-week" data-role="toggle-bonus-submission-team" data-key="${groupKey}">
+            <div class="locked-week-label">${group.teamName}<span class="locked-week-total"> — ${group.rows.length} submission${group.rows.length===1?'':'s'}</span></div>
+            <span style="font-size:11px;color:var(--ink-soft);">${groupExpanded ? '▲ Collapse' : '▼ Expand'}</span>
           </div>`;
+          if(groupExpanded){
+            html += `<div style="display:flex;flex-wrap:wrap;gap:12px;margin:-4px 0 14px 4px;padding-left:14px;border-left:2px solid var(--line);">`;
+            group.rows.forEach(t => {
+              const review = reviews[t.id];
+              const proof = proofs[t.id];
+              const reviewStatus = review ? review.status : 'pending';
+              html += `<div style="width:110px;text-align:center;">
+                ${proof
+                  ? `<img class="thumb" style="width:110px;height:110px;cursor:zoom-in;" src="${proof.proof}" data-role="thumb-bonus-review" data-bonus="${b.id}" data-target="${t.id}" data-src="${proof.proof}">`
+                  : `<div class="thumb-placeholder">no proof</div>`}
+                <div style="font-size:11px;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${t.name}</div>
+                <span class="status-pill status-${reviewStatus}" style="font-size:9px;padding:1px 6px;">${REVIEW_STATUS_META[reviewStatus].label}</span>
+              </div>`;
+            });
+            html += `</div>`;
+          }
         });
       }
     }
@@ -3086,6 +3096,35 @@ const App = {
         <button class="modal-close" data-role="modal-close">&times;</button>
         <div class="serif" style="font-size:16px;">Proof</div>
         <img src="${m.src}">
+      </div></div>`;
+    }
+    // Admin bonus-proof review: the full photo titled with who submitted it
+    // (a person's name for an individual challenge, a team's name for a
+    // team one), plus the same verified/needs_review/rejected buttons
+    // renderBonusSubmissions() shows inline — reads the challenge/review
+    // fresh off state each render (only bonusId/targetId/src are stored on
+    // the modal) so clicking a button here updates the title's status pill
+    // immediately without closing the modal.
+    if(m.type === 'bonusProofReview'){
+      const b = this.state.bonus[m.bonusId];
+      const name = b
+        ? (b.type === 'individual' ? (this.state.users[m.targetId]?.name || m.targetId) : (this.state.teams[m.targetId]?.name || m.targetId))
+        : m.targetId;
+      const review = b && b.reviews ? b.reviews[m.targetId] : null;
+      const reviewStatus = review ? review.status : 'pending';
+      return `<div class="modal-overlay" data-role="modal-overlay"><div class="modal modal-wide">
+        <button class="modal-close" data-role="modal-close">&times;</button>
+        <div class="serif" style="font-size:16px;">${name}</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+          <span style="font-size:12px;color:var(--ink-soft);">${b ? b.title : ''}</span>
+          <span class="status-pill status-${reviewStatus}">${REVIEW_STATUS_META[reviewStatus].label}</span>
+        </div>
+        <img src="${m.src}">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:12px;">
+          ${['verified','needs_review','rejected'].map(s => `<button class="btn btn-sm" data-role="set-bonus-review" data-id="${m.bonusId}" data-target="${m.targetId}" data-status="${s}"
+            style="${reviewStatus===s ? `background:${REVIEW_STATUS_META[s].bg};border-color:${REVIEW_STATUS_META[s].bg};color:${REVIEW_STATUS_META[s].fg};` : ''}">${REVIEW_STATUS_META[s].short}</button>`).join('')}
+          ${review ? `<button class="btn btn-sm" data-role="set-bonus-review" data-id="${m.bonusId}" data-target="${m.targetId}" data-status="">Clear</button>` : ''}
+        </div>
       </div></div>`;
     }
     // Admin proof review: the full photo next to that week's day-by-day
@@ -3163,6 +3202,11 @@ const App = {
       this.state.expandedBonusPhotoGroups[id] = !this.state.expandedBonusPhotoGroups[id];
       this.render();
     }));
+    root.querySelectorAll('[data-role="toggle-bonus-submission-team"]').forEach(el => el.addEventListener('click', () => {
+      const key = el.dataset.key;
+      this.state.expandedBonusSubmissionTeams[key] = !this.state.expandedBonusSubmissionTeams[key];
+      this.render();
+    }));
     root.querySelectorAll('[data-role="toggle-participant-team"]').forEach(el => el.addEventListener('click', () => {
       const t = el.dataset.team;
       this.state.expandedParticipantTeams[t] = !this.state.expandedParticipantTeams[t];
@@ -3189,6 +3233,7 @@ const App = {
     root.querySelectorAll('[data-role="remove-proof"]').forEach(el => el.addEventListener('click', () => this.removeMyProof(Number(el.dataset.week))));
     root.querySelectorAll('[data-role="thumb"]').forEach(el => el.addEventListener('click', () => this.openModal({ type:'image', src: el.dataset.src })));
     root.querySelectorAll('[data-role="thumb-review"]').forEach(el => el.addEventListener('click', () => this.openModal({ type:'proofReview', uid: el.dataset.uid, weekIndex: Number(el.dataset.week), src: el.dataset.src })));
+    root.querySelectorAll('[data-role="thumb-bonus-review"]').forEach(el => el.addEventListener('click', () => this.openModal({ type:'bonusProofReview', bonusId: el.dataset.bonus, targetId: el.dataset.target, src: el.dataset.src })));
     root.querySelectorAll('[data-role="set-day-review"]').forEach(el => el.addEventListener('click', () => this.setDayReview(el.dataset.uid, el.dataset.date, el.dataset.status)));
 
     const startDateBtn = document.getElementById('btn-save-startdate');
