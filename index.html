@@ -1172,10 +1172,14 @@ const App = {
   // team — see ensureUserClient()'s role param — so this is the only way to
   // get them all back to "no team" without deleting anyone's account).
   async clearAllTeams(){
-    if(!this.isPrestart()){ alert('The challenge has started — team details are locked.'); return; }
     const teamCount = Object.keys(this.state.teams).length;
     if(!teamCount){ alert('There are no teams to clear.'); return; }
-    if(!confirm(`This removes all ${teamCount} team(s) and unassigns everyone (participants and admins) from their team. Accounts and step data are kept. Continue?`)) return;
+    // Deliberately not gated by isPrestart() like the other roster tools —
+    // this only ever touches team membership, never step data, so it's safe
+    // to run mid-challenge too (e.g. cleaning up stray/test teams admins
+    // ended up on after the event already started).
+    const warning = this.isPrestart() ? '' : ' The challenge has already started — this will pull everyone off their current team and reset the My Team race for all of them.';
+    if(!confirm(`This removes all ${teamCount} team(s) and unassigns everyone (participants and admins) from their team. Accounts and step data are kept.${warning} Continue?`)) return;
     const toUnassign = Object.values(this.state.users).filter(u => u.teamId);
     for(const u of toUnassign){
       await updateDoc(doc(db,'users',u.uid), { teamId: null }).catch(()=>{});
@@ -2648,7 +2652,7 @@ const App = {
 
     const teams = Object.values(this.state.teams);
     html += `<div class="panel"><h3>Teams (${teams.length})</h3>`;
-    if(prestart && teams.length){
+    if(teams.length){
       html += `<div style="margin-bottom:12px;"><button class="btn btn-sm btn-danger" id="btn-clear-all-teams">Clear all teams</button></div>`;
     }
     html += teams.length ? teams.map(t => `<div class="team-card">
