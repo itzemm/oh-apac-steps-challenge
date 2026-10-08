@@ -2401,8 +2401,16 @@ const App = {
   renderTeamRoster(team){
     const prestart = this.isPrestart();
     const isCaptain = team.captainUid === this.state.identity.uid;
-    const teamTotal = team.members.reduce((s,m)=> s + this.userTotal(m), 0);
-    const funHtml = this.renderFunStats(this.getFunFacts('team', teamTotal, team.id));
+    const teamSteps = team.members.reduce((s,m)=> s + this.userTotal(m), 0);
+    // weekIndex omitted counts every awarded bonus regardless of scope —
+    // same "overall" total the leaderboard's Overall tab shows (see
+    // teamBonusPoints()'s own comment) — so this stays in sync with it.
+    const teamBonus = this.teamBonusPoints(team.id);
+    const teamTotal = teamSteps + teamBonus;
+    // Fun facts (distance to KL, etc.) are about physical steps walked, not
+    // bonus-challenge points, so these stay based on teamSteps alone even
+    // though the headline "Team total" above includes both.
+    const funHtml = this.renderFunStats(this.getFunFacts('team', teamSteps, team.id));
 
     const raceHtml = this.renderTeamRaceHistory(team);
 
@@ -2432,7 +2440,7 @@ const App = {
         <h3><img class="header-logo" src="assets/otters/otter-sg.png" alt="">${team.name} <span class="tag tag-open" style="margin-left:8px;">${team.members.length}/${TEAM_SIZE_LIMIT}</span></h3>
         ${membersHtml}
         <div style="margin-top:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-          <div style="font-size:13px;color:var(--ink-soft);">Team total: ${teamTotal.toLocaleString()} steps</div>
+          <div style="font-size:13px;color:var(--ink-soft);">Team total: ${teamTotal.toLocaleString()} steps${teamBonus ? ` <span style="color:var(--ink-soft);">(${teamSteps.toLocaleString()} steps + ${teamBonus.toLocaleString()} bonus)</span>` : ''}</div>
           ${prestart ? `<button class="btn btn-sm" data-role="leave-team">Leave team</button>` : ''}
         </div>
       </div>
