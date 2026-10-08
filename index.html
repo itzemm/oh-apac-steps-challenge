@@ -537,7 +537,9 @@ const App = {
     adminCreateMsg: null,
     photoCategoryOpen: { steps:false, bonus:false },
     expandedBonusPhotoGroups: {},
-    expandedBonusSubmissionTeams: {}
+    expandedBonusSubmissionTeams: {},
+    bonusHistoryOpenTrail: false,
+    bonusHistoryOpenTeam: false
   },
 
   init(){
@@ -936,20 +938,27 @@ const App = {
   weekProofOf(record, weekIndex){
     return record && record.weekProof ? record.weekProof[weekIndex] : null;
   },
-  // A week-scoped bonus challenge shows to participants from its own week
-  // onward — not just during that one live week — so a team/individual can
-  // still see a past week's challenge, their submission, and whether it was
-  // awarded (see renderBonusCard()'s statusTag) instead of it vanishing the
-  // moment the next week starts. Still hidden before its own week, and an
-  // overall-scoped one always shows regardless of week. Admins see
-  // everything in the Manage & award list regardless of week either way,
-  // since they need to set up or review challenges outside the current
-  // week too (that list doesn't call this function).
+  // A week-scoped bonus challenge only shows in the main list during its
+  // own week; an overall-scoped one always shows. A past week's challenge
+  // isn't hidden entirely though — see isPastBonusChallenge() below, which
+  // feeds the separate collapsed "Past bonus challenges" section so last
+  // week's submission/award status is still reachable without cluttering
+  // the current week's list. Admins still see everything in the Manage &
+  // award list regardless of week, since they need to set up or review
+  // challenges outside the current week too (that list doesn't call this).
   isBonusVisibleNow(b){
     if(b.scope !== 'week') return true;
     const status = this.getChallengeStatus();
     if(!status.started) return false;
-    return b.weekIndex <= status.weekIndex;
+    return b.weekIndex === status.weekIndex;
+  },
+  // A week-scoped challenge whose week has already passed — the
+  // complement of isBonusVisibleNow() for week-scoped challenges, used to
+  // build the collapsed history section in renderTrail()/renderTeamRoster().
+  isPastBonusChallenge(b){
+    if(b.scope !== 'week') return false;
+    const status = this.getChallengeStatus();
+    return status.started && b.weekIndex < status.weekIndex;
   },
   // Who the award grid ("Manage & award challenges") targets — unaffected
   // by perMemberProof, since points always land on the team as a whole for
@@ -2071,15 +2080,21 @@ const App = {
     const funHtml = this.renderFunStats(this.getFunFacts('my', myTotal));
 
     const myTeam = this.getMyTeam();
-    const bonusList = Object.values(this.state.bonus).filter(b => b.active !== false && this.isBonusVisibleNow(b));
+    const bonusAll = Object.values(this.state.bonus).filter(b => b.active !== false);
+    const bonusList = bonusAll.filter(b => this.isBonusVisibleNow(b));
+    const pastBonusList = bonusAll.filter(b => this.isPastBonusChallenge(b));
+    const bonusCardFor = (b) => {
+      const isTeamType = b.type === 'team';
+      const targetId = isTeamType ? (myTeam ? myTeam.id : null) : this.state.identity.uid;
+      const joinPrompt = isTeamType && !myTeam ? 'Join a team to work toward this' : null;
+      return this.renderBonusCard(b, targetId, joinPrompt);
+    };
     let bonusHtml = '';
-    if(bonusList.length){
-      bonusHtml = `<div class="panel"><h3>Bonus challenges available</h3>` + bonusList.map(b => {
-        const isTeamType = b.type === 'team';
-        const targetId = isTeamType ? (myTeam ? myTeam.id : null) : this.state.identity.uid;
-        const joinPrompt = isTeamType && !myTeam ? 'Join a team to work toward this' : null;
-        return this.renderBonusCard(b, targetId, joinPrompt);
-      }).join('') + `</div>`;
+    if(bonusList.length || pastBonusList.length){
+      bonusHtml = `<div class="panel"><h3>Bonus challenges available</h3>`
+        + bonusList.map(bonusCardFor).join('')
+        + this.renderBonusHistorySection(pastBonusList, 'bonusHistoryOpenTrail', bonusCardFor)
+        + `</div>`;
     }
 
     const activeWeek = status.ended ? cfg.weeks - 1 : status.weekIndex;
@@ -2194,6 +2209,22 @@ const App = {
       <div class="day-date"><div class="dow">${dow}</div><div class="num">${md}</div></div>
       <div class="day-body">${body}</div>
     </div>`;
+  },
+
+  // Collapsed by default, same visual pattern as a locked week elsewhere in
+  // the app — expand to see each past week's bonus challenge rendered with
+  // the exact same card (submission thumbnail, award status) the current
+  // week's list uses, via cardFor. stateKey is which of the two independent
+  // toggles (trail vs team) this instance uses.
+  renderBonusHistorySection(pastList, stateKey, cardFor){
+    if(!pastList.length) return '';
+    const expanded = !!this.state[stateKey];
+    let html = `<div class="locked-week" data-role="toggle-bonus-history" data-key="${stateKey}">
+      <div class="locked-week-label">Past bonus challenges<span class="locked-week-total"> — ${pastList.length}</span></div>
+      <span style="font-size:11px;color:var(--ink-soft);">${expanded ? '▲ Collapse' : '▼ Expand'}</span>
+    </div>`;
+    if(expanded) html += pastList.map(cardFor).join('');
+    return html;
   },
 
   // Shared between the individual list (renderTrail) and a team's own list
@@ -2384,10 +2415,16 @@ const App = {
       </div>`;
     }).join('');
 
-    const bonusList = Object.values(this.state.bonus).filter(b => b.type==='team' && b.active !== false && this.isBonusVisibleNow(b));
+    const bonusAll = Object.values(this.state.bonus).filter(b => b.type==='team' && b.active !== false);
+    const bonusList = bonusAll.filter(b => this.isBonusVisibleNow(b));
+    const pastBonusList = bonusAll.filter(b => this.isPastBonusChallenge(b));
+    const teamBonusCardFor = (b) => this.renderBonusCard(b, team.id, null);
     let bonusHtml = '';
-    if(bonusList.length){
-      bonusHtml = `<div class="panel"><h3>Bonus challenges for your team</h3>` + bonusList.map(b => this.renderBonusCard(b, team.id, null)).join('') + `</div>`;
+    if(bonusList.length || pastBonusList.length){
+      bonusHtml = `<div class="panel"><h3>Bonus challenges for your team</h3>`
+        + bonusList.map(teamBonusCardFor).join('')
+        + this.renderBonusHistorySection(pastBonusList, 'bonusHistoryOpenTeam', teamBonusCardFor)
+        + `</div>`;
     }
 
     return `
@@ -3269,6 +3306,11 @@ const App = {
     root.querySelectorAll('[data-role="toggle-bonus-submission-team"]').forEach(el => el.addEventListener('click', () => {
       const key = el.dataset.key;
       this.state.expandedBonusSubmissionTeams[key] = !this.state.expandedBonusSubmissionTeams[key];
+      this.render();
+    }));
+    root.querySelectorAll('[data-role="toggle-bonus-history"]').forEach(el => el.addEventListener('click', () => {
+      const key = el.dataset.key;
+      this.state[key] = !this.state[key];
       this.render();
     }));
     root.querySelectorAll('[data-role="toggle-participant-team"]').forEach(el => el.addEventListener('click', () => {
