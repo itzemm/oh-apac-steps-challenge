@@ -2401,15 +2401,21 @@ const App = {
   renderTeamRoster(team){
     const prestart = this.isPrestart();
     const isCaptain = team.captainUid === this.state.identity.uid;
+    const status = this.getChallengeStatus();
+    const currentWeek = status.started ? (status.ended ? this.state.config.weeks - 1 : status.weekIndex) : 0;
     const teamSteps = team.members.reduce((s,m)=> s + this.userTotal(m), 0);
-    // weekIndex omitted counts every awarded bonus regardless of scope —
-    // same "overall" total the leaderboard's Overall tab shows (see
-    // teamBonusPoints()'s own comment) — so this stays in sync with it.
-    const teamBonus = this.teamBonusPoints(team.id);
-    const teamTotal = teamSteps + teamBonus;
-    // Fun facts (distance to KL, etc.) are about physical steps walked, not
-    // bonus-challenge points, so these stay based on teamSteps alone even
-    // though the headline "Team total" above includes both.
+    // The header total is scoped to the current week only — this week's
+    // steps plus any bonus challenge scoped to this same week (an
+    // overall-scope bonus's points only ever show up in the Overall
+    // leaderboard total, same rule teamBonusPoints() already applies there)
+    // — not the whole-event cumulative total, so it reads alongside the
+    // "Week N race" section below it as "how's my team doing this week".
+    const teamStepsThisWeek = team.members.reduce((s,m)=> s + this.userWeekTotal(m, currentWeek), 0);
+    const teamBonus = this.teamBonusPoints(team.id, currentWeek);
+    const teamTotal = teamStepsThisWeek + teamBonus;
+    // Fun facts (distance to KL, etc.) are about physical steps walked over
+    // the whole event, so these stay based on the overall, not-week-scoped
+    // teamSteps — unlike the headline total above, which is this week only.
     const funHtml = this.renderFunStats(this.getFunFacts('team', teamSteps, team.id));
 
     const raceHtml = this.renderTeamRaceHistory(team);
@@ -2440,7 +2446,7 @@ const App = {
         <h3><img class="header-logo" src="assets/otters/otter-sg.png" alt="">${team.name} <span class="tag tag-open" style="margin-left:8px;">${team.members.length}/${TEAM_SIZE_LIMIT}</span></h3>
         ${membersHtml}
         <div style="margin-top:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-          <div style="font-size:13px;color:var(--ink-soft);">Team total: ${teamTotal.toLocaleString()} steps${teamBonus ? ` <span style="color:var(--ink-soft);">(${teamSteps.toLocaleString()} steps + ${teamBonus.toLocaleString()} bonus)</span>` : ''}</div>
+          <div style="font-size:13px;color:var(--ink-soft);">Week ${currentWeek+1} total: ${teamTotal.toLocaleString()} steps${teamBonus ? ` <span style="color:var(--ink-soft);">(${teamStepsThisWeek.toLocaleString()} steps + ${teamBonus.toLocaleString()} bonus)</span>` : ''}</div>
           ${prestart ? `<button class="btn btn-sm" data-role="leave-team">Leave team</button>` : ''}
         </div>
       </div>
