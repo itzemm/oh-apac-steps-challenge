@@ -2378,11 +2378,17 @@ const App = {
       const u = this.state.users[m];
       return { name: u ? u.name : m, value: this.userWeekTotal(m, weekIdx) };
     });
+    // Same breakdown concept as the "Week N total" header above (steps for
+    // this week plus any bonus challenge scoped to this same week) so each
+    // week's race shows the same kind of total its own week represents.
+    const weekSteps = raceEntries.reduce((s,e) => s+e.value, 0);
+    const weekBonus = this.teamBonusPoints(team.id, weekIdx);
+    const weekTotal = weekSteps + weekBonus;
+    const breakdown = weekBonus ? ` <span style="color:var(--ink-soft);">(${weekSteps.toLocaleString()} steps + ${weekBonus.toLocaleString()} bonus)</span>` : '';
     const locked = wStatus === 'locked';
     if(locked && !this.state.raceExpandedWeeks[weekIdx]){
-      const winner = raceEntries.reduce((best, e) => (!best || e.value > best.value) ? e : best, null);
       return `<div class="panel locked-week" data-role="toggle-race-expand" data-week="${weekIdx}">
-        <div class="locked-week-label">Week ${weekIdx+1} race${winner && winner.value ? `<span class="locked-week-total"> — ${winner.name} led with ${winner.value.toLocaleString()} steps</span>` : ''}</div>
+        <div class="locked-week-label">Week ${weekIdx+1} race<span class="locked-week-total"> — ${weekTotal.toLocaleString()} steps${breakdown}</span></div>
         <span style="font-size:11px;color:var(--ink-soft);">▼ Expand</span>
       </div>`;
     }
@@ -2390,6 +2396,7 @@ const App = {
       <h3${locked ? ` data-role="toggle-race-expand" data-week="${weekIdx}" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;"` : ''}>
         <span>Week ${weekIdx+1} race</span>${locked ? `<span style="font-size:11px;color:var(--ink-soft);font-weight:400;">▲ Collapse</span>` : ''}
       </h3>
+      <div style="font-size:13px;color:var(--ink-soft);margin-bottom:10px;">Week ${weekIdx+1} total: ${weekTotal.toLocaleString()} steps${breakdown}</div>
       <div class="race-row race-axis-row">
         <div class="race-name"></div>
         <div class="race-axis"><span>Start</span><span>Finish</span></div>
