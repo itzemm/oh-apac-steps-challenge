@@ -936,15 +936,20 @@ const App = {
   weekProofOf(record, weekIndex){
     return record && record.weekProof ? record.weekProof[weekIndex] : null;
   },
-  // A week-scoped bonus challenge only shows to participants during its own
-  // week; an overall-scoped one always shows. Admins still see everything
-  // in the Manage & award list regardless of week, since they need to set
-  // up or review challenges outside the current week too.
+  // A week-scoped bonus challenge shows to participants from its own week
+  // onward — not just during that one live week — so a team/individual can
+  // still see a past week's challenge, their submission, and whether it was
+  // awarded (see renderBonusCard()'s statusTag) instead of it vanishing the
+  // moment the next week starts. Still hidden before its own week, and an
+  // overall-scoped one always shows regardless of week. Admins see
+  // everything in the Manage & award list regardless of week either way,
+  // since they need to set up or review challenges outside the current
+  // week too (that list doesn't call this function).
   isBonusVisibleNow(b){
     if(b.scope !== 'week') return true;
     const status = this.getChallengeStatus();
     if(!status.started) return false;
-    return b.weekIndex === status.weekIndex;
+    return b.weekIndex <= status.weekIndex;
   },
   // Who the award grid ("Manage & award challenges") targets — unaffected
   // by perMemberProof, since points always land on the team as a whole for
