@@ -502,6 +502,13 @@ const App = {
     users: {},
     teams: {},
     bonus: {},
+    // Which of config/users/teams/bonus most recently failed to load —
+    // surfaced as a retry banner in renderAppShell() instead of silently
+    // rendering as if the challenge were empty (no participants, no teams,
+    // nothing to do) with no indication anything went wrong. See the four
+    // load*() functions below.
+    loadErrors: new Set(),
+    retryingLoads: false,
     mySteps: null,
     myProofs: null,
     myBonusProofs: {},
@@ -557,6 +564,7 @@ const App = {
       this.state.identity = null;
       this.state.mySteps = null;
       this.state.notRegistered = false;
+      this.state.loadErrors.clear();
       this.state.booting = false;
       this.render();
       return;
@@ -567,9 +575,20 @@ const App = {
     await this.loadUsers();
     await this.loadTeams();
     await this.loadBonus();
+    await this.resolveProfileAfterLoad(user);
+    this.state.booting = false;
+    this.render();
+  },
+  // Split out of handleAuthChange() so retryFailedLoads() can re-run the
+  // exact same profile lookup after a retry succeeds — without this, a
+  // loadUsers() failure during boot would make a genuinely-registered
+  // person's profile lookup come up empty too, and they'd wrongly land on
+  // "Account not set up" instead of a retry prompt (see that branch below).
+  async resolveProfileAfterLoad(user){
     const profile = this.state.users[user.uid];
     if(profile){
       this.state.identity = { uid: user.uid, name: profile.name, email: profile.email };
+      this.state.notRegistered = false;
       // Admins get per-tab session persistence (signing out in one tab
       // doesn't sign out others, so an admin can be signed into a second
       // account in another tab) — everyone else keeps the default shared
@@ -578,21 +597,34 @@ const App = {
       // new storage immediately rather than only affecting future sign-ins.
       setPersistence(auth, profile.role === 'admin' ? browserSessionPersistence : browserLocalPersistence).catch(()=>{});
       await this.enterApp();
+    } else if(this.state.loadErrors.has('users')){
+      // The lookup came up empty because loadUsers() itself failed, not
+      // because this account genuinely has no profile — leave identity
+      // unset so render() shows the retry screen instead of a false
+      // "not registered" message.
+      this.state.identity = null;
     } else {
       // Signed in with valid credentials, but no admin-provisioned profile
       // exists — there's no self-service signup, so this account just isn't
       // set up yet (or was deleted from Firestore separately from Auth).
       this.state.notRegistered = true;
     }
-    this.state.booting = false;
-    this.render();
   },
 
   async loadConfig(){
     try{
       const snap = await getDoc(doc(db,'config','main'));
       this.state.config = snap.exists() ? {...DEFAULT_CONFIG, ...snap.data()} : {...DEFAULT_CONFIG};
-    }catch(e){ this.state.config = {...DEFAULT_CONFIG}; }
+      this.state.loadErrors.delete('config');
+    }catch(e){
+      // Only fall back to a blank config on the very first failed attempt
+      // (state.config starts out null) — a later failure (e.g. a transient
+      // blip on refreshLeaderboard()) leaves whatever was already loaded in
+      // place rather than wiping it out from under a page that's already
+      // showing it.
+      if(!this.state.config) this.state.config = {...DEFAULT_CONFIG};
+      this.state.loadErrors.add('config');
+    }
   },
   async loadUsers(){
     try{
@@ -600,7 +632,8 @@ const App = {
       const map = {};
       snap.forEach(d => { map[d.id] = { uid: d.id, ...d.data() }; });
       this.state.users = map;
-    }catch(e){ this.state.users = {}; }
+      this.state.loadErrors.delete('users');
+    }catch(e){ this.state.loadErrors.add('users'); }
   },
   async loadTeams(){
     try{
@@ -608,7 +641,8 @@ const App = {
       const map = {};
       snap.forEach(d => { map[d.id] = { id: d.id, ...d.data() }; });
       this.state.teams = map;
-    }catch(e){ this.state.teams = {}; }
+      this.state.loadErrors.delete('teams');
+    }catch(e){ this.state.loadErrors.add('teams'); }
   },
   async loadBonus(){
     try{
@@ -616,7 +650,8 @@ const App = {
       const map = {};
       snap.forEach(d => { map[d.id] = { id: d.id, ...d.data() }; });
       this.state.bonus = map;
-    }catch(e){ this.state.bonus = {}; }
+      this.state.loadErrors.delete('bonus');
+    }catch(e){ this.state.loadErrors.add('bonus'); }
   },
   async saveConfig(){ await setDoc(doc(db,'config','main'), this.state.config, { merge:true }); },
   // Re-fetches everyone's totals, teams, and bonus awards on demand — same
@@ -627,6 +662,23 @@ const App = {
     this.render();
     await Promise.all([this.loadUsers(), this.loadTeams(), this.loadBonus()]);
     this.state.lbRefreshing = false;
+    this.render();
+  },
+  // Re-runs whichever of config/users/teams/bonus most recently failed —
+  // the retry banner's button. Harmless to re-run all four even if only
+  // one is actually in loadErrors.
+  async retryFailedLoads(){
+    this.state.retryingLoads = true;
+    this.render();
+    await Promise.all([this.loadConfig(), this.loadUsers(), this.loadTeams(), this.loadBonus()]);
+    // If this retry is happening pre-login (the boot-failed retry screen —
+    // see render()), re-resolve the profile lookup too, so a successful
+    // retry signs them straight in instead of just clearing the error and
+    // leaving them stuck on the same screen.
+    if(!this.state.identity && this.state.authUser){
+      await this.resolveProfileAfterLoad(this.state.authUser);
+    }
+    this.state.retryingLoads = false;
     this.render();
   },
 
@@ -1971,6 +2023,21 @@ const App = {
         </div></div>
       `;
     }
+    // Signed in successfully, but loading the data needed to even look up
+    // the profile (loadUsers(), etc.) failed — see resolveProfileAfterLoad()
+    // — so neither "signed in" nor "not registered" is actually known yet.
+    // Offer a retry instead of either silently stalling or wrongly claiming
+    // the account isn't set up.
+    if(this.state.authUser && this.state.loadErrors.size){
+      return `
+        <div class="login-wrap"><div class="login-card">
+          <div class="login-hero">Couldn't load your data</div>
+          <div class="login-sub">You signed in, but the challenge data couldn't be loaded — check your connection and try again.</div>
+          <button class="btn btn-primary btn-block" id="btn-retry-loads" ${this.state.retryingLoads ? 'disabled' : ''}>${this.state.retryingLoads ? 'Retrying…' : 'Retry'}</button>
+          <button class="btn btn-block" id="btn-sign-out" style="margin-top:8px;">Sign out</button>
+        </div></div>
+      `;
+    }
     return `
       <div class="login-wrap"><div class="login-card">
         <img class="login-hero-otter" src="assets/otters/otter-duo.png" alt="">
@@ -1988,6 +2055,8 @@ const App = {
   bindLogin(){
     const signOutBtn = document.getElementById('btn-sign-out');
     if(signOutBtn) signOutBtn.addEventListener('click', () => this.switchIdentity());
+    const retryLoadsBtn = document.getElementById('btn-retry-loads');
+    if(retryLoadsBtn) retryLoadsBtn.addEventListener('click', () => this.retryFailedLoads());
     const signInBtn = document.getElementById('btn-sign-in');
     if(signInBtn){
       const submit = () => this.signInWithUsername(
@@ -2007,6 +2076,18 @@ const App = {
     if(status.started && !status.ended) statusLabel = `Week ${status.weekIndex+1} of ${cfg.weeks}`;
     if(status.ended) statusLabel = 'Challenge complete';
 
+    // Surfaced whenever config/users/teams/bonus most recently failed to
+    // load (see the four load*() functions) — without this, a transient
+    // network blip or a Firestore hiccup under heavy concurrent load would
+    // silently render as an empty, broken-looking challenge (no
+    // participants, no teams) with nothing telling the person why.
+    const loadErrorBanner = this.state.loadErrors.size
+      ? `<div class="notice" style="background:var(--rust-tint);color:var(--rust);margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+          <span>⚠ Couldn't load the latest data — you may be seeing out-of-date or incomplete information. Check your connection and retry.</span>
+          <button class="btn btn-sm" id="btn-retry-loads" ${this.state.retryingLoads ? 'disabled' : ''}>${this.state.retryingLoads ? 'Retrying…' : 'Retry'}</button>
+        </div>`
+      : '';
+
     return `
       <div class="header">
         <div>
@@ -2015,6 +2096,7 @@ const App = {
         </div>
         <div class="status-pill">${statusLabel}</div>
       </div>
+      ${loadErrorBanner}
       <div class="tabs">
         <div class="tab ${this.state.view==='trail'?'active':''}" data-view="trail">My trail</div>
         <div class="tab ${this.state.view==='myteam'?'active':''}" data-view="myteam">My team</div>
@@ -3311,6 +3393,8 @@ const App = {
     root.querySelectorAll('[data-role="toggle-lb-expand"]').forEach(el => el.addEventListener('click', () => { this.state.lbExpanded = !this.state.lbExpanded; this.render(); }));
     const refreshLbBtn = document.getElementById('btn-refresh-leaderboard');
     if(refreshLbBtn) refreshLbBtn.addEventListener('click', () => this.refreshLeaderboard());
+    const retryLoadsBtn = document.getElementById('btn-retry-loads');
+    if(retryLoadsBtn) retryLoadsBtn.addEventListener('click', () => this.retryFailedLoads());
 
     root.querySelectorAll('[data-role="toggle-week-expand"]').forEach(el => el.addEventListener('click', () => {
       const w = Number(el.dataset.week);
