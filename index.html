@@ -611,9 +611,29 @@ const App = {
     }
   },
 
+  // Generic retry-with-backoff for transient Firestore failures — a brief
+  // network blip, or contention on a hot document (e.g. many people hitting
+  // bonus/{bonusId}.submissions in the same second right before a deadline).
+  // Skips retrying anything that isn't going to succeed on its own (a rules
+  // rejection, bad input) so those still fail immediately and visibly
+  // instead of silently stalling for seconds first.
+  async withRetry(fn, { attempts = 4, baseDelayMs = 400 } = {}){
+    const NON_TRANSIENT = new Set(['permission-denied','invalid-argument','not-found','already-exists','failed-precondition','unauthenticated','unimplemented']);
+    for(let i = 0; i < attempts; i++){
+      try{
+        return await fn();
+      }catch(e){
+        const code = e && e.code ? e.code : '';
+        if(NON_TRANSIENT.has(code) || i === attempts - 1) throw e;
+        const delay = baseDelayMs * Math.pow(2, i) * (0.75 + Math.random()*0.5);
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+  },
+
   async loadConfig(){
     try{
-      const snap = await getDoc(doc(db,'config','main'));
+      const snap = await this.withRetry(() => getDoc(doc(db,'config','main')));
       this.state.config = snap.exists() ? {...DEFAULT_CONFIG, ...snap.data()} : {...DEFAULT_CONFIG};
       this.state.loadErrors.delete('config');
     }catch(e){
@@ -628,7 +648,7 @@ const App = {
   },
   async loadUsers(){
     try{
-      const snap = await getDocs(collection(db,'users'));
+      const snap = await this.withRetry(() => getDocs(collection(db,'users')));
       const map = {};
       snap.forEach(d => { map[d.id] = { uid: d.id, ...d.data() }; });
       this.state.users = map;
@@ -637,7 +657,7 @@ const App = {
   },
   async loadTeams(){
     try{
-      const snap = await getDocs(collection(db,'teams'));
+      const snap = await this.withRetry(() => getDocs(collection(db,'teams')));
       const map = {};
       snap.forEach(d => { map[d.id] = { id: d.id, ...d.data() }; });
       this.state.teams = map;
@@ -646,7 +666,7 @@ const App = {
   },
   async loadBonus(){
     try{
-      const snap = await getDocs(collection(db,'bonus'));
+      const snap = await this.withRetry(() => getDocs(collection(db,'bonus')));
       const map = {};
       snap.forEach(d => { map[d.id] = { id: d.id, ...d.data() }; });
       this.state.bonus = map;
@@ -739,7 +759,7 @@ const App = {
     // since then.
     batch.set(doc(db,'steps',uid), { name:this.state.mySteps.name, email:this.state.mySteps.email, days:this.state.mySteps.days }, { merge:true });
     batch.update(doc(db,'users',uid), { total, byWeek });
-    await batch.commit();
+    await this.withRetry(() => batch.commit());
     if(this.state.users[uid]) Object.assign(this.state.users[uid], { total, byWeek });
   },
   async saveMyProof(weekIndex, dataUrl){
@@ -752,7 +772,7 @@ const App = {
     // loaded, a full overwrite here would silently drop it.
     batch.set(doc(db,'proofs',uid), { weekProof: { [weekIndex]: entry } }, { merge:true });
     batch.set(doc(db,'steps',uid), { hasProof: { [weekIndex]: true } }, { merge:true });
-    await batch.commit();
+    await this.withRetry(() => batch.commit());
     if(!this.state.myProofs.weekProof) this.state.myProofs.weekProof = {};
     this.state.myProofs.weekProof[weekIndex] = entry;
     if(!this.state.mySteps.hasProof) this.state.mySteps.hasProof = {};
@@ -764,7 +784,7 @@ const App = {
     const batch = writeBatch(db);
     batch.set(doc(db,'proofs',uid), { weekProof: { [weekIndex]: deleteField() } }, { merge:true });
     batch.set(doc(db,'steps',uid), { hasProof: { [weekIndex]: false } }, { merge:true });
-    await batch.commit();
+    await this.withRetry(() => batch.commit());
     if(this.state.myProofs.weekProof) delete this.state.myProofs.weekProof[weekIndex];
     if(this.state.mySteps.hasProof) this.state.mySteps.hasProof[weekIndex] = false;
     this.render();
@@ -1096,23 +1116,44 @@ const App = {
       const dataUrl = await this.compressImage(file);
       await this.saveMyProof(weekIndex, dataUrl);
       this.render();
-    }catch(e){ alert('Could not process that image. Try a different file.'); }
+    }catch(e){ alert(e && e.message ? e.message : 'Could not process that image. Try a different file.'); }
   },
 
+  // Firestore hard-caps a document at 1 MiB. A base64 data URL's character
+  // count is ~1 byte/char (it's ASCII), so that length is a safe proxy for
+  // the bytes this photo adds to its document. The cap here is set well
+  // under that 1 MiB ceiling because bonusProofs/{id} merges EVERY
+  // bonus-challenge photo a person/team has ever submitted into one
+  // document (see submitBonusProof()'s comment) — each photo needs real
+  // headroom for the others sharing that doc, not just to fit on its own.
+  // Progressively shrinks dimensions/quality rather than failing outright,
+  // since most phone photos comfortably hit the first step.
   compressImage(file){
+    const MAX_DATA_URL_LENGTH = 180000; // ~176KB — leaves room for 5+ photos in one doc
+    const STEPS = [[800,0.6], [800,0.45], [600,0.45], [600,0.35], [450,0.35], [350,0.3]];
     return new Promise((resolve, reject)=>{
       const reader = new FileReader();
       reader.onload = e => {
         const img = new Image();
         img.onload = () => {
-          const maxDim = 800;
-          let w = img.width, h = img.height;
-          if(w > h && w > maxDim){ h = Math.round(h*maxDim/w); w = maxDim; }
-          else if(h >= w && h > maxDim){ w = Math.round(w*maxDim/h); h = maxDim; }
-          const canvas = document.createElement('canvas');
-          canvas.width = w; canvas.height = h;
-          canvas.getContext('2d').drawImage(img,0,0,w,h);
-          resolve(canvas.toDataURL('image/jpeg', 0.6));
+          const renderAt = (maxDim, quality) => {
+            let w = img.width, h = img.height;
+            if(w > h && w > maxDim){ h = Math.round(h*maxDim/w); w = maxDim; }
+            else if(h >= w && h > maxDim){ w = Math.round(w*maxDim/h); h = maxDim; }
+            const canvas = document.createElement('canvas');
+            canvas.width = w; canvas.height = h;
+            canvas.getContext('2d').drawImage(img,0,0,w,h);
+            return canvas.toDataURL('image/jpeg', quality);
+          };
+          let result = renderAt(STEPS[0][0], STEPS[0][1]);
+          for(let i = 1; i < STEPS.length && result.length > MAX_DATA_URL_LENGTH; i++){
+            result = renderAt(STEPS[i][0], STEPS[i][1]);
+          }
+          if(result.length > MAX_DATA_URL_LENGTH){
+            reject(new Error('Photo is too large to upload even after compression — try a different photo.'));
+            return;
+          }
+          resolve(result);
         };
         img.onerror = reject;
         img.src = e.target.result;
@@ -1375,7 +1416,7 @@ const App = {
       const dataUrl = await this.compressImage(file);
       await this.submitBonusProof(challengeId, dataUrl);
       this.render();
-    }catch(e){ alert('Could not process that image. Try a different file.'); }
+    }catch(e){ alert(e && e.message ? e.message : 'Could not process that image. Try a different file.'); }
   },
   async submitBonusProof(challengeId, dataUrl){
     const ch = this.state.bonus[challengeId];
@@ -1402,7 +1443,7 @@ const App = {
     // (see that file's comment on bonus/{bonusId}).
     batch.update(doc(db,'bonus',challengeId), { [`submissions.${targetId}`]: now });
     batch.set(doc(db,'bonusProofs',targetId), { [challengeId]: { proof: dataUrl, submittedAt: now } }, { merge:true });
-    await batch.commit();
+    await this.withRetry(() => batch.commit());
     if(!ch.submissions) ch.submissions = {};
     ch.submissions[targetId] = now;
     this.state.myBonusProofs[challengeId] = { proof: dataUrl, submittedAt: now };
@@ -1426,7 +1467,7 @@ const App = {
     const batch = writeBatch(db);
     batch.update(doc(db,'bonus',challengeId), { [`submissions.${targetId}`]: deleteField() });
     batch.update(doc(db,'bonusProofs',targetId), { [challengeId]: deleteField() });
-    await batch.commit();
+    await this.withRetry(() => batch.commit());
     if(ch.submissions) delete ch.submissions[targetId];
     delete this.state.myBonusProofs[challengeId];
     this.render();
