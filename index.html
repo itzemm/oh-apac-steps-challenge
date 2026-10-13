@@ -367,6 +367,10 @@ const REVIEW_STATUS_META = {
 const TEAM_SIZE_LIMIT = 5;
 const DAILY_STEP_CAP = 40000;
 const DEFAULT_CONFIG = { name: 'OH APAC Steps Challenge', startDate: null, weeks: 3, stepsLimit: null };
+// Shown everywhere the weekly deadline is mentioned — see weekDeadline()'s
+// comment for the single UTC instant (06:30) this corresponds to in each
+// zone, and the AEST/AEDT caveat.
+const DEADLINE_TIME_LABEL = '2:30pm SGT/HKT · 12:00pm IST · 5:30pm AEDT';
 
 // ---------- "Did you know?" fun facts ----------
 // Every ref is compared against a derived quantity (distance walked, calories
@@ -871,17 +875,26 @@ const App = {
   isPrestart(){
     return !this.getChallengeStatus().started;
   },
-  // A week's data (steps + proof) stays editable until the following Monday
-  // at noon, Singapore time — giving people the weekend plus Monday morning
-  // to log the previous week's steps rather than locking the instant the
-  // next week begins.
+  // A week's data (steps + proof) stays editable until the following
+  // Monday, at a single fixed instant worldwide — 06:30 UTC — picked so it
+  // lands at the same moment as Monday 2:30pm in Singapore/Hong Kong,
+  // Monday 12:00pm in India, and Monday 5:30pm in Sydney/Melbourne (AEDT —
+  // Australia's summer-time offset, UTC+11; during the months AEST applies
+  // instead, roughly April–October, the same instant reads as 4:30pm there,
+  // one hour earlier). See DEADLINE_TIME_LABEL below for the string shown
+  // to participants. Giving people the weekend plus Monday to log the
+  // previous week's steps, rather than locking the instant the next week
+  // begins, is the whole point — comparing against a real, unshifted
+  // Date() (not sgtNow(), which is deliberately offset for calendar-date
+  // logic elsewhere and would double-count that offset here) keeps this
+  // exact regardless of which timezone a participant's own device is in.
   weekDeadline(weekIndex){
     const monday = this.addDays(this.state.config.startDate, weekIndex*7 + 7);
-    return new Date(monday + 'T12:00:00Z');
+    return new Date(monday + 'T06:30:00Z');
   },
   isPastWeekDeadline(weekIndex){
     if(!this.state.config.startDate) return true;
-    return this.sgtNow() >= this.weekDeadline(weekIndex);
+    return new Date() >= this.weekDeadline(weekIndex);
   },
   getWeekStatus(weekIndex){
     const status = this.getChallengeStatus();
@@ -1010,7 +1023,7 @@ const App = {
     const dayIndex = this.daysBetween(cfg.startDate, date);
     const weekIndex = Math.floor(dayIndex/7);
     if(this.isPastWeekDeadline(weekIndex)){
-      alert('The deadline to enter steps for that week (Monday noon) has passed.');
+      alert(`The deadline to enter steps for that week (Monday, ${DEADLINE_TIME_LABEL}) has passed.`);
       return;
     }
     this.state.mySteps.days[date] = { steps, submittedAt: new Date().toISOString() };
@@ -1322,7 +1335,7 @@ const App = {
     // submissionTargetsFor()'s comment.
     const targetId = (ch.type === 'team' && !ch.perMemberProof) ? myTeam.id : this.state.identity.uid;
     if(ch.scope === 'week' && Number.isInteger(ch.weekIndex) && this.isPastWeekDeadline(ch.weekIndex)){
-      alert('The deadline for this challenge (Monday noon) has passed — this can no longer be changed.');
+      alert(`The deadline for this challenge (Monday, ${DEADLINE_TIME_LABEL}) has passed — this can no longer be changed.`);
       return;
     }
     if(ch.scope !== 'week' && Number.isInteger(ch.photoWeekIndex) && this.getWeekStatus(ch.photoWeekIndex) !== 'editable'){
@@ -1350,7 +1363,7 @@ const App = {
     if(ch.type === 'team' && !myTeam) return;
     const targetId = (ch.type === 'team' && !ch.perMemberProof) ? myTeam.id : this.state.identity.uid;
     if(ch.scope === 'week' && Number.isInteger(ch.weekIndex) && this.isPastWeekDeadline(ch.weekIndex)){
-      alert('The deadline for this challenge (Monday noon) has passed — this can no longer be changed.');
+      alert(`The deadline for this challenge (Monday, ${DEADLINE_TIME_LABEL}) has passed — this can no longer be changed.`);
       return;
     }
     if(ch.scope !== 'week' && Number.isInteger(ch.photoWeekIndex) && this.getWeekStatus(ch.photoWeekIndex) !== 'editable'){
@@ -2073,8 +2086,8 @@ const App = {
     for(let w=0; w<cfg.weeks; w++){ if(this.getWeekStatus(w) === 'editable') openWeeks.push(w); }
     if(openWeeks.length){
       const soonest = openWeeks.reduce((a,b) => this.weekDeadline(a) < this.weekDeadline(b) ? a : b);
-      const deadlineLabel = this.formatDate(this.addDays(cfg.startDate, soonest*7 + 7)) + ', 12pm';
-      deadlineHtml = `<div class="notice" style="margin-bottom:18px;">⏰ <strong>Deadline:</strong> submit Week ${soonest+1}'s steps and proof photo by <strong>${deadlineLabel}</strong> (Singapore time). After that, Week ${soonest+1} will be <strong>locked</strong> — no further changes can be made.</div>`;
+      const deadlineLabel = this.formatDate(this.addDays(cfg.startDate, soonest*7 + 7));
+      deadlineHtml = `<div class="notice" style="margin-bottom:18px;">⏰ <strong>Deadline:</strong> submit Week ${soonest+1}'s steps and proof photo by <strong>Monday, ${deadlineLabel}</strong> — ${DEADLINE_TIME_LABEL}. After that, Week ${soonest+1} will be <strong>locked</strong> — no further changes can be made.</div>`;
     }
 
     const funHtml = this.renderFunStats(this.getFunFacts('my', myTotal));
@@ -2133,7 +2146,7 @@ const App = {
       const status = this.getChallengeStatus();
       const isGraceWeek = weekIndex !== status.weekIndex || status.ended;
       tag = isGraceWeek
-        ? `<span class="tag tag-editable">Open until Mon ${this.formatDate(this.addDays(cfg.startDate, weekIndex*7+7))}, 12pm</span>`
+        ? `<span class="tag tag-editable">Open until Mon ${this.formatDate(this.addDays(cfg.startDate, weekIndex*7+7))}, 2:30pm SGT/HKT</span>`
         : `<span class="tag tag-editable">Open</span>`;
     }
     else if(wStatus === 'future') tag = `<span class="tag tag-upcoming">Not yet</span>`;
