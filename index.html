@@ -1737,6 +1737,18 @@ const App = {
       const cred = await createUserWithEmailAndPassword(provisioningAuth, email, username);
       uid = cred.user.uid;
     }catch(e){
+      if(e.code === 'auth/too-many-requests'){
+        // Google's Identity Toolkit throttles account creation/sign-in after
+        // enough attempts in a short window — this is its own abuse
+        // protection, not something a retry can work around. It typically
+        // trips during roster testing, where every "Regenerate roster" rerun
+        // re-provisions everyone from scratch (Firestore profiles are wiped,
+        // but the old Firebase Auth logins linger — see syncRoster()'s
+        // comment — so returning people each cost a create+sign-in pair,
+        // every single rerun). Bail out immediately rather than continuing
+        // to hammer the limiter for the rest of the roster.
+        throw new Error('Firebase is temporarily rate-limiting new account creation (too many attempts in a short time). Wait 15–30 minutes before trying "Regenerate roster" again — retrying sooner will only extend the block.');
+      }
       if(e.code === 'auth/email-already-in-use'){
         // A login exists but its profile is missing — most likely a previous
         // add attempt created the account but failed to write the profile
@@ -1748,6 +1760,9 @@ const App = {
           const cred = await signInWithEmailAndPassword(provisioningAuth, email, username);
           uid = cred.user.uid;
         }catch(e2){
+          if(e2.code === 'auth/too-many-requests'){
+            throw new Error('Firebase is temporarily rate-limiting account sign-ins (too many attempts in a short time). Wait 15–30 minutes before trying "Regenerate roster" again — retrying sooner will only extend the block.');
+          }
           throw new Error(`"${username}" already has a login with a password that's since changed, but no profile — ask an admin to check this account manually (see scripts/README.md).`);
         }
       } else {
