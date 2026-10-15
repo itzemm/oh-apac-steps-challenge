@@ -371,6 +371,15 @@ const DEFAULT_CONFIG = { name: 'OH APAC Steps Challenge', startDate: null, weeks
 // comment for the single UTC instant (06:30) this corresponds to in each
 // zone, and the AEST/AEDT caveat.
 const DEADLINE_TIME_LABEL = '2:30pm SGT/HKT · 12:00pm IST · 5:30pm AEDT';
+// One otter look per team-roster slot (team size tops out at TEAM_SIZE_LIMIT)
+// — a member's look is RACER_OTTERS[their index in team.members], so the
+// same person always races as the same otter, and a team's own mascot
+// (wherever it's shown as a single entity, not broken out by member) is
+// just whichever look that puts on its captain — see teamMascot().
+const RACER_OTTERS = [
+  'assets/otters/otter-racer-1.png', 'assets/otters/otter-racer-2.png', 'assets/otters/otter-racer-3.png',
+  'assets/otters/otter-racer-4.png', 'assets/otters/otter-racer-5.png'
+];
 
 // ---------- "Did you know?" fun facts ----------
 // Every ref is compared against a derived quantity (distance walked, calories
@@ -550,7 +559,9 @@ const App = {
     expandedBonusPhotoGroups: {},
     expandedBonusSubmissionTeams: {},
     bonusHistoryOpenTrail: false,
-    bonusHistoryOpenTeam: false
+    bonusHistoryOpenTeam: false,
+    adminCollapsed: {},
+    bonusCardCollapsed: {}
   },
 
   init(){
@@ -1168,6 +1179,15 @@ const App = {
     const me = this.state.users[this.state.identity.uid];
     if(!me || !me.teamId) return null;
     return this.state.teams[me.teamId] || null;
+  },
+  // Wherever a team is shown as one entity (not broken out by member, the
+  // way its own week race is) — its own header, or the team-vs-team
+  // leaderboard — it's represented by whichever RACER_OTTERS look its
+  // captain races as (same index-in-members mapping as the week race).
+  teamMascot(team){
+    if(!team || !team.members || !team.members.length) return RACER_OTTERS[0];
+    const idx = Math.max(0, team.members.indexOf(team.captainUid));
+    return RACER_OTTERS[idx % RACER_OTTERS.length];
   },
   slugify(name){
     return name.toLowerCase().trim().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'') || 'team';
@@ -2552,7 +2572,7 @@ const App = {
         <div class="race-name"></div>
         <div class="race-axis"><span>Start</span><span>Finish</span></div>
       </div>
-      ${this.renderRaceTrack(raceEntries, 'assets/otters/otter-lion.png', { unit:'steps', locked })}
+      ${this.renderRaceTrack(raceEntries, RACER_OTTERS, { unit:'steps', locked })}
     </div>`;
   },
 
@@ -2601,7 +2621,7 @@ const App = {
 
     return `
       <div class="panel">
-        <h3><img class="header-logo" src="assets/otters/otter-sg.png" alt="">${team.name} <span class="tag tag-open" style="margin-left:8px;">${team.members.length}/${TEAM_SIZE_LIMIT}</span></h3>
+        <h3><img class="header-logo" src="${this.teamMascot(team)}" alt="">${team.name} <span class="tag tag-open" style="margin-left:8px;">${team.members.length}/${TEAM_SIZE_LIMIT}</span></h3>
         ${membersHtml}
         <div style="margin-top:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
           <div style="font-size:13px;color:var(--ink-soft);">Week ${currentWeek+1} total: ${teamTotal.toLocaleString()} steps${teamBonus ? ` <span style="color:var(--ink-soft);">(${teamStepsThisWeek.toLocaleString()} steps + ${teamBonus.toLocaleString()} bonus)</span>` : ''}</div>
@@ -2629,19 +2649,25 @@ const App = {
   // week is actually over (opts.locked left undefined/true, e.g. the
   // leaderboard's overall ranking, or a team's past week), the true leader
   // reaches the finish line for real.
+  // otterSrc is either one image path (used for every lane, e.g. the
+  // Leaderboard's individual/team race) or an array of paths, cycled by lane
+  // index — e.g. "My team"'s week race gives each member their own look
+  // (team size tops out at 5, same as the otter-racer-*.png set).
   renderRaceTrack(entries, otterSrc, opts){
     opts = opts || {};
     if(!entries.length) return `<div class="empty">No one in this race yet.</div>`;
     const max = opts.max || Math.max(1, ...entries.map(e=>e.value));
     const capPct = opts.locked === false ? 90 : 100;
+    const otterList = Array.isArray(otterSrc) ? otterSrc : [otterSrc];
     return entries.map((e, i) => {
       const pct = Math.min(capPct, Math.max(2, (e.value/max)*100));
       const delay = (i % 5) * 0.11;
       const arrived = capPct === 100 && pct >= 100;
+      const src = otterList[i % otterList.length];
       return `<div class="race-row">
         <div class="race-name">${e.name}${opts.unit ? `<div class="race-value">${e.value.toLocaleString()} ${opts.unit}</div>` : ''}</div>
         <div class="race-lane-track">
-          <img class="race-lane-otter" src="${otterSrc}" alt="" style="left:${pct.toFixed(1)}%;animation-delay:${delay.toFixed(2)}s;${arrived ? 'animation-play-state:paused;' : ''}">
+          <img class="race-lane-otter" src="${src}" alt="" style="left:${pct.toFixed(1)}%;animation-delay:${delay.toFixed(2)}s;${arrived ? 'animation-play-state:paused;' : ''}">
           <div class="race-lane-finish"></div>
         </div>
       </div>`;
@@ -2665,8 +2691,12 @@ const App = {
   // show just the viewer's own row plus a toggle to reveal everyone else,
   // so they can always find themselves without necessarily seeing the
   // whole roster.
+  // otterSrc is either one image path (every podium block, e.g. individuals)
+  // or a function(entry) => path for a per-entry look (e.g. each team's own
+  // mascot via teamMascot()).
   renderLeaderboardBoard(entries, unit, myId, otterSrc){
     if(!entries.length) return `<div class="empty">No one to rank yet.</div>`;
+    const otterFor = typeof otterSrc === 'function' ? otterSrc : () => otterSrc;
     let rank = 0;
     const ranked = entries.map((e, i) => {
       if(i === 0 || e.value !== entries[i-1].value) rank = i + 1;
@@ -2679,7 +2709,7 @@ const App = {
 
     const podiumHtml = `<div class="podium-wrap">${top3.map(e => `
       <div class="podium-block rank-${e.rank}${e.id===myId?' mine':''}">
-        <img class="podium-otter" src="${otterSrc}" alt="">
+        <img class="podium-otter" src="${otterFor(e)}" alt="">
         <div class="podium-rank">${e.rank}</div>
         <div class="podium-name">${e.name}</div>
         <div class="podium-value">${e.value.toLocaleString()} ${unit}</div>
@@ -2749,7 +2779,7 @@ const App = {
 
     const myTeam = this.getMyTeam();
     const board = this.state.lbMode === 'team'
-      ? this.renderLeaderboardBoard(teams, unit, myTeam ? myTeam.id : null, 'assets/otters/otter-sg.png')
+      ? this.renderLeaderboardBoard(teams, unit, myTeam ? myTeam.id : null, e => this.teamMascot(this.state.teams[e.id]))
       : this.renderLeaderboardBoard(individuals, unit, this.state.identity.uid, 'assets/otters/otter-lion.png');
 
     return `
@@ -2762,11 +2792,30 @@ const App = {
   },
 
   // ---------- Admin ----------
+  // Every top-level panel on the Admin tab can be collapsed independently —
+  // defaults to expanded (nothing yet in adminCollapsed) so updating this
+  // never hides something an admin was already looking at. titleHtml can
+  // include a live count/badge; it stays visible either way, only the
+  // panel's body (whatever the caller renders after this header) disappears
+  // when collapsed.
+  adminSectionHeader(key, titleHtml){
+    const collapsed = !!this.state.adminCollapsed[key];
+    return `<h3 data-role="toggle-admin-section" data-key="${key}" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px;">
+      <span>${titleHtml}</span>
+      <span style="font-size:11px;color:var(--ink-soft);font-weight:400;white-space:nowrap;">${collapsed ? '▼ Expand' : '▲ Collapse'}</span>
+    </h3>`;
+  },
+  adminSectionCollapsed(key){
+    return !!this.state.adminCollapsed[key];
+  },
+
   renderAdmin(){
     const cfg = this.state.config;
+    const settingsCollapsed = this.adminSectionCollapsed('settings');
     let html = `
       <div class="panel">
-        <h3>Challenge settings</h3>
+        ${this.adminSectionHeader('settings', 'Challenge settings')}
+        ${settingsCollapsed ? '' : `
         <div class="config-row">
           <div class="field" style="margin-bottom:0;"><label>Start date (Singapore time)</label><input type="date" id="in-startdate" value="${cfg.startDate || ''}"></div>
           <button class="btn btn-primary" id="btn-save-startdate">Save date</button>
@@ -2776,6 +2825,7 @@ const App = {
           <button class="btn btn-primary" id="btn-save-limit">Save limit</button>
         </div>
         <div style="margin-top:16px;"><button class="btn btn-danger btn-sm" id="btn-reset">Reset challenge data</button></div>
+        `}
       </div>
     `;
 
@@ -2804,7 +2854,10 @@ const App = {
 
     const prestart = this.isPrestart();
     const hasStart = !!cfg.startDate;
-    html += `<div class="panel"><h3>Participants (${users.length}) <span style="font-weight:400;font-size:12px;color:var(--ink-soft);">grouped by team — click a team to expand</span></h3>`;
+    const participantsCollapsed = this.adminSectionCollapsed('participants');
+    html += `<div class="panel">${this.adminSectionHeader('participants', `Participants (${users.length}) <span style="font-weight:400;font-size:12px;color:var(--ink-soft);">grouped by team — click a team to expand</span>`)}`;
+    if(participantsCollapsed){ html += `</div>`; }
+    else {
     html += `<div style="margin-bottom:12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
       <button class="btn btn-sm" id="btn-export-all-data">Export all data (CSV)</button>
       <button class="btn btn-sm" id="btn-random-audit">🎲 Randomly select someone to audit</button>
@@ -2897,15 +2950,19 @@ const App = {
       });
     });
     html += `</tbody></table></div></div>`;
+    } // end participantsCollapsed else
 
     const teams = Object.values(this.state.teams);
-    html += `<div class="panel"><h3>Teams (${teams.length})</h3>`;
-    if(teams.length){
-      html += `<div style="margin-bottom:12px;"><button class="btn btn-sm btn-danger" id="btn-clear-all-teams">Clear all teams</button></div>`;
+    const teamsCollapsed = this.adminSectionCollapsed('teams');
+    html += `<div class="panel">${this.adminSectionHeader('teams', `Teams (${teams.length})`)}`;
+    if(!teamsCollapsed){
+      if(teams.length){
+        html += `<div style="margin-bottom:12px;"><button class="btn btn-sm btn-danger" id="btn-clear-all-teams">Clear all teams</button></div>`;
+      }
+      html += teams.length ? teams.map(t => `<div class="team-card">
+          <div><div class="tname">${t.name}</div><div class="tmeta">${t.members.length}/${TEAM_SIZE_LIMIT} · captain ${this.state.users[t.captainUid] ? this.state.users[t.captainUid].name : '—'} · ${t.members.map(m=>this.state.users[m]?this.state.users[m].name:m).join(', ')}</div></div>
+        </div>`).join('') : `<div class="empty">No teams formed yet.</div>`;
     }
-    html += teams.length ? teams.map(t => `<div class="team-card">
-        <div><div class="tname">${t.name}</div><div class="tmeta">${t.members.length}/${TEAM_SIZE_LIMIT} · captain ${this.state.users[t.captainUid] ? this.state.users[t.captainUid].name : '—'} · ${t.members.map(m=>this.state.users[m]?this.state.users[m].name:m).join(', ')}</div></div>
-      </div>`).join('') : `<div class="empty">No teams formed yet.</div>`;
     html += `</div>`;
 
     html += this.renderAdminAdmins();
@@ -2926,7 +2983,8 @@ const App = {
     const admins = allUsers.filter(u => u.role === 'admin').sort((a,b) => a.name.localeCompare(b.name));
     const nonAdmins = allUsers.filter(u => u.role !== 'admin').sort((a,b) => a.name.localeCompare(b.name));
 
-    let html = `<div class="panel"><h3>Admins (${admins.length})</h3>`;
+    let html = `<div class="panel">${this.adminSectionHeader('admins', `Admins (${admins.length})`)}`;
+    if(!this.adminSectionCollapsed('admins')){
     html += admins.length
       ? `<div class="table-wrap"><table class="roster"><thead><tr><th>Name</th><th class="col-email">Email</th><th>Team</th><th></th></tr></thead><tbody>`
         + admins.map(u => `<tr><td>${u.name}</td><td class="col-email">${u.email}</td><td>${u.teamId ? (this.state.teams[u.teamId]?.name || u.teamId) : '—'}</td>
@@ -2954,6 +3012,7 @@ const App = {
         <button class="btn btn-primary" id="btn-create-admin">Create admin</button>
       </div>
     </div>`;
+    }
 
     html += `</div>`;
     return html;
@@ -3021,9 +3080,11 @@ const App = {
   // "View" button uses, so drilling into someone's photos here looks and
   // behaves like that table, not a second UI to learn.
   renderAdminPhotoProof(){
-    let html = `<div class="panel"><h3>Photo proof</h3>`;
-    html += this.renderStepsPhotoCategory();
-    html += this.renderBonusPhotoCategory();
+    let html = `<div class="panel">${this.adminSectionHeader('photo-proof', 'Photo proof')}`;
+    if(!this.adminSectionCollapsed('photo-proof')){
+      html += this.renderStepsPhotoCategory();
+      html += this.renderBonusPhotoCategory();
+    }
     html += `</div>`;
     return html;
   },
@@ -3160,8 +3221,9 @@ const App = {
       </div>`;
     }
 
-    html += `<div class="panel">
-      <h3>Add a participant</h3>
+    html += `<div class="panel">${this.adminSectionHeader('add-participant', 'Add a participant')}`;
+    if(!this.adminSectionCollapsed('add-participant')){
+    html += `
       ${msg ? `<div class="notice" style="${msg.type==='error' ? 'background:var(--rust-tint);color:var(--rust);' : ''}">${msg.text}</div>` : ''}
       <div class="form-inline">
         <div class="field" style="margin-bottom:0;flex:1;min-width:160px;"><label>Team name (optional)</label><input type="text" id="in-part-team" value="${f.teamName}" placeholder="Trail Blazers"></div>
@@ -3170,10 +3232,13 @@ const App = {
         <button class="btn btn-primary" id="btn-add-participant">Add</button>
       </div>
       <div style="font-size:12px;color:var(--ink-soft);margin-top:8px;">Creates a new team if it doesn't exist yet (up to 5 people per team). Leave team name blank to create the account with no team — assign one afterward from the "Team" dropdown in the Participants table below. Their username and password (the same as the username) are shown here once added.</div>
-    </div>`;
+    `;
+    }
+    html += `</div>`;
 
-    html += `<div class="panel">
-      <h3>Key in the team roster</h3>
+    html += `<div class="panel">${this.adminSectionHeader('roster-import', 'Key in the team roster')}`;
+    if(!this.adminSectionCollapsed('roster-import')){
+    html += `
       <div style="font-size:12px;color:var(--ink-soft);margin-bottom:10px;">
         Columns, in this exact order, no header needed: <code>Team Name, Captain, Member 2, Member 3, Member 4, Member 5</code> (leave later columns blank for smaller teams). <a href="scripts/roster.example.csv" target="_blank" rel="noopener">See an example</a>.
         <br><strong>Every submission fully replaces the current roster.</strong> There's no personal data to lose before the challenge starts, so re-keying wipes every existing participant and regenerates fresh accounts (and passwords) from exactly what's in this list — nothing is merged or carried over.
@@ -3193,6 +3258,7 @@ const App = {
         ${result.credentials.length ? `<button class="btn btn-sm" id="btn-download-roster-creds" style="margin-top:6px;">Download usernames &amp; passwords (CSV)</button>` : ''}
       </div>`;
     }
+    }
     html += `</div>`;
     return html;
   },
@@ -3201,8 +3267,9 @@ const App = {
     const f = this.state.bonusForm;
     const cfg = this.state.config;
     const scopeVal = f.scope === 'week' ? `week-${f.weekIndex}` : 'overall';
-    let html = `<div class="panel">
-      <h3>Bonus challenges</h3>
+    let html = `<div class="panel">${this.adminSectionHeader('bonus-add', 'Bonus challenges')}`;
+    if(!this.adminSectionCollapsed('bonus-add')){
+    html += `
       <div class="form-inline">
         <div class="field" style="margin-bottom:0;flex:2;min-width:160px;"><label>Title</label><input type="text" id="in-bonus-title" value="${f.title}" placeholder="Weekend hike"></div>
         <div class="field" style="margin-bottom:0;flex:3;min-width:180px;"><label>Description (optional)</label><input type="text" id="in-bonus-desc" value="${f.description}" placeholder="Complete a hike over the weekend"></div>
@@ -3231,12 +3298,17 @@ const App = {
         <button class="btn btn-primary" id="btn-add-bonus">Add challenge</button>
       </div>
       <div style="font-size:12px;color:var(--ink-soft);margin-top:8px;">"Photo window" only matters for a whole-challenge (not week-specific) photo-required challenge — e.g. a challenge that runs the whole event but where you only want to collect photos during Week 3. "Each team member submits their own proof" only matters for a team challenge — everyone on the team uploads their own photo individually, but the points are still awarded to the whole team at once, not per person.</div>
-    </div>`;
+    `;
+    }
+    html += `</div>`;
 
     const list = Object.values(this.state.bonus).sort((a,b)=> (b.createdAt||'').localeCompare(a.createdAt||''));
     if(!list.length) return html;
 
-    html += `<div class="panel"><h3>Manage &amp; award challenges</h3>
+    const bonusManageCollapsed = this.adminSectionCollapsed('bonus-manage');
+    html += `<div class="panel">${this.adminSectionHeader('bonus-manage', 'Manage &amp; award challenges')}`;
+    if(bonusManageCollapsed){ html += `</div>`; return html; }
+    html += `
       <div class="lb-mode-toggle">
         <button class="lb-mode-btn ${this.state.bonusManageFilter==='all'?'active':''}" data-role="bonus-manage-filter" data-filter="all">All</button>
         <button class="lb-mode-btn ${this.state.bonusManageFilter==='individual'?'active':''}" data-role="bonus-manage-filter" data-filter="individual">Individual</button>
@@ -3252,6 +3324,7 @@ const App = {
       const scopeLabel = b.scope === 'week' && Number.isInteger(b.weekIndex) ? `<span class="type-pill">Week ${b.weekIndex+1}</span>` : '';
       const photoWeekLabel = b.scope !== 'week' && Number.isInteger(b.photoWeekIndex) ? `<span class="type-pill">Photo: Week ${b.photoWeekIndex+1} only</span>` : '';
       const perMemberLabel = b.type === 'team' && b.perMemberProof ? `<span class="type-pill">Individual proof</span>` : '';
+      const cardCollapsed = !!this.state.bonusCardCollapsed[b.id];
       html += `<div class="challenge-card">
         <div class="ctop">
           <div><span class="ctitle">${b.title}</span><span class="type-pill">${b.type==='individual'?'Individual':'Team'}</span>${scopeLabel}${b.requirePhoto?'<span class="type-pill">Photo required</span>':''}${photoWeekLabel}${perMemberLabel}${b.active===false?'<span class="type-pill">Disabled</span>':''}${b.description?`<div class="cdesc">${b.description}</div>`:''}${b.reminder?`<div style="margin-top:4px;font-size:12px;color:#7A5A11;background:var(--amber-tint);padding:3px 8px;border-radius:6px;display:inline-block;">🔔 ${b.reminder}</div>`:''}</div>
@@ -3259,8 +3332,10 @@ const App = {
             <span class="points-pill">${b.points} steps</span>
             <button class="btn btn-sm" data-role="toggle-bonus-active" data-id="${b.id}">${b.active===false?'Enable':'Disable'}</button>
             <button class="btn btn-sm btn-danger" data-role="delete-bonus" data-id="${b.id}">Delete</button>
+            <button class="btn btn-sm" data-role="toggle-bonus-card" data-id="${b.id}">${cardCollapsed ? '▼ Expand' : '▲ Collapse'}</button>
           </div>
         </div>
+        ${cardCollapsed ? '' : `
         <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:10px;">
           ${targets.length ? `<div class="field" style="margin-bottom:0;max-width:280px;"><input type="text" data-role="bonus-filter" placeholder="Search by ${b.type==='individual'?'individual name':'team name'}…"></div>` : ''}
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink-soft);"><input type="checkbox" data-role="bonus-awarded-filter"> Show only awarded</label>
@@ -3274,6 +3349,7 @@ const App = {
           }).join('') : `<span class="empty" style="padding:0;">No ${b.type==='individual'?'participants':'teams'} yet.</span>`}
         </div>
         ${b.requirePhoto ? this.renderBonusSubmissions(b, this.submissionTargetsFor(b)) : ''}
+        `}
       </div>`;
     });
     html += `</div>`;
@@ -3465,6 +3541,16 @@ const App = {
     root.querySelectorAll('[data-role="toggle-proof-team"]').forEach(el => el.addEventListener('click', () => {
       const t = el.dataset.team;
       this.state.expandedProofTeams[t] = !this.state.expandedProofTeams[t];
+      this.render();
+    }));
+    root.querySelectorAll('[data-role="toggle-admin-section"]').forEach(el => el.addEventListener('click', () => {
+      const key = el.dataset.key;
+      this.state.adminCollapsed[key] = !this.state.adminCollapsed[key];
+      this.render();
+    }));
+    root.querySelectorAll('[data-role="toggle-bonus-card"]').forEach(el => el.addEventListener('click', () => {
+      const id = el.dataset.id;
+      this.state.bonusCardCollapsed[id] = !this.state.bonusCardCollapsed[id];
       this.render();
     }));
     root.querySelectorAll('[data-role="toggle-photo-category"]').forEach(el => el.addEventListener('click', () => {
