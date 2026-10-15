@@ -565,8 +565,11 @@ const App = {
     // dozens of bonus challenges just to reach Admins or Photo proof.
     adminCollapsed: {
       settings: true, 'bonus-add': true, 'bonus-manage': true, 'add-participant': true,
-      'roster-import': true, participants: true, teams: true, admins: true, 'photo-proof': true
+      'roster-import': true, participants: true, teams: true, admins: true, 'photo-proof': true,
+      'diversity-bonus': true
     },
+    diversityImportBusy: false,
+    diversityImportResult: null,
     // Keyed by bonus challenge id; absent/true = collapsed (the default —
     // see toggle-bonus-card), explicit false = expanded.
     bonusCardCollapsed: {}
@@ -1577,11 +1580,20 @@ const App = {
     }).reduce((s,b)=>s+b.points,0);
   },
   teamBonusPoints(teamId, weekIndex){
-    return Object.values(this.state.bonus).filter(b => {
+    let total = Object.values(this.state.bonus).filter(b => {
       if(b.type !== 'team' || !b.completed.includes(teamId)) return false;
       if(weekIndex === undefined || weekIndex === 'overall') return true;
       return b.scope === 'week' && b.weekIndex === weekIndex;
     }).reduce((s,b)=>s+b.points,0);
+    // Diversity bonuses (admin-uploaded — see renderAdminDiversityBonus())
+    // are a flat per-team point total, not tied to any single week, so they
+    // only ever count toward the Overall leaderboard — same rule an
+    // overall-scoped bonus challenge already follows above.
+    if(weekIndex === undefined || weekIndex === 'overall'){
+      const team = this.state.teams[teamId];
+      if(team) total += (team.locationBonusPoints || 0) + (team.diverseTeamBonusPoints || 0);
+    }
+    return total;
   },
 
   // ---------- Fun stats ----------
@@ -1991,6 +2003,52 @@ const App = {
     if(!r || !r.credentials || !r.credentials.length) return;
     const rows = [['Team','Name','Username','Initial Password']].concat(r.credentials.map(c=>[c.team,c.name,c.username,c.password]));
     this.downloadCSV('generated-credentials.csv', rows);
+  },
+  // Bulk-sets two flat, overall-only bonus point pools per team — "location
+  // diversity" and "cross-team diversity" — from a CSV: Team Name, Location
+  // Bonus Points, Team Diversity Bonus Points. Unlike bonus/{id} challenges
+  // (one fixed point value, awarded via a checkbox per target), these are an
+  // arbitrary number per team straight from the admin's own spreadsheet, so
+  // they're stored directly on each team doc instead — teamBonusPoints()
+  // folds them into the Overall total, never a single week's (see its
+  // comment). A team name is matched after stripping any "TeamN_" prefix
+  // (tolerating the org spreadsheet's own numbering — see adminTeamLabel()),
+  // case-sensitive otherwise against the team's real name. Unmatched rows
+  // are reported, not guessed at.
+  async syncDiversityBonuses(text){
+    this.state.diversityImportBusy = true;
+    this.state.diversityImportResult = null;
+    this.render();
+    try{
+      const rows = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(l => l.split(',').map(c => c.trim()));
+      const dataRows = (rows[0] && /team/i.test(rows[0][0] || '')) ? rows.slice(1) : rows;
+      const byName = {};
+      Object.values(this.state.teams).forEach(t => { byName[t.name] = t; });
+
+      const matched = [];
+      const unmatched = [];
+      const batch = writeBatch(db);
+      dataRows.forEach(cells => {
+        const raw = (cells[0] || '').trim();
+        if(!raw) return;
+        const name = raw.replace(/^Team\d+_/i, '');
+        const team = byName[name];
+        const locationPts = Number(cells[1]) || 0;
+        const diversePts = Number(cells[2]) || 0;
+        if(!team){ unmatched.push(raw); return; }
+        batch.update(doc(db,'teams',team.id), { locationBonusPoints: locationPts, diverseTeamBonusPoints: diversePts });
+        matched.push({ id: team.id, name: team.name, locationPts, diversePts });
+      });
+      if(matched.length) await this.withRetry(() => batch.commit());
+      matched.forEach(m => {
+        if(this.state.teams[m.id]) Object.assign(this.state.teams[m.id], { locationBonusPoints: m.locationPts, diverseTeamBonusPoints: m.diversePts });
+      });
+      this.state.diversityImportResult = { matched, unmatched };
+    }catch(e){
+      this.state.diversityImportResult = { error: e.message || 'Import failed.' };
+    }
+    this.state.diversityImportBusy = false;
+    this.render();
   },
 
   async resetChallenge(){
@@ -2849,6 +2907,7 @@ const App = {
     `;
 
     html += this.renderAdminBonus();
+    html += this.renderAdminDiversityBonus();
     html += this.renderAdminParticipantTools();
 
     if(!this.state.allStepsLoaded){
@@ -3375,6 +3434,50 @@ const App = {
     return html;
   },
 
+  // Flat, overall-only bonus points per team for "location diversity" and
+  // "cross-team diversity" — uploaded as a CSV rather than ticked off one by
+  // one like a normal bonus challenge, since the points themselves vary per
+  // team straight from the admin's own spreadsheet. See syncDiversityBonuses()
+  // for the upload/matching logic and teamBonusPoints() for how these fold
+  // into the Overall leaderboard only.
+  renderAdminDiversityBonus(){
+    let html = `<div class="panel">${this.adminSectionHeader('diversity-bonus', 'Diversity bonuses')}`;
+    if(!this.adminSectionCollapsed('diversity-bonus')){
+      const teamsWithBonus = Object.values(this.state.teams)
+        .filter(t => (t.locationBonusPoints || 0) || (t.diverseTeamBonusPoints || 0))
+        .sort((a,b) => a.name.localeCompare(b.name));
+      html += `
+        <div style="font-size:12px;color:var(--ink-soft);margin-bottom:10px;">
+          Awards flat bonus points to a team for having members from different locations, and separately for members drawn from different (work) teams — set once from a spreadsheet, not toggled per person. <strong>These only ever count toward the Overall leaderboard</strong>, never a single week's total.
+          <br>Columns, in this exact order, no header needed: <code>Team Name, Location Bonus Points, Team Diversity Bonus Points</code>. Team Name must match the team's actual name (a "Team1_" prefix, if your spreadsheet uses one, is tolerated and stripped). Re-uploading replaces both point values for any team listed — rows for teams not listed are left untouched.
+        </div>
+        <div class="field" style="margin-bottom:8px;"><label>Upload a CSV file</label><input type="file" accept=".csv,text/csv" id="in-diversity-file" ${this.state.diversityImportBusy ? 'disabled' : ''}></div>
+        <div class="field" style="margin-bottom:8px;"><label>…or paste the list here instead</label><textarea id="in-diversity-paste" rows="5" placeholder="AliensWalking, 50, 30&#10;ASCteam, 0, 20" ${this.state.diversityImportBusy ? 'disabled' : ''}></textarea></div>
+        <button class="btn btn-primary" id="btn-sync-diversity" ${this.state.diversityImportBusy ? 'disabled' : ''}>Upload</button>
+        ${this.state.diversityImportBusy ? `<div class="loading">Working…</div>` : ''}
+      `;
+      const result = this.state.diversityImportResult;
+      if(result && result.error){
+        html += `<div class="notice" style="background:var(--rust-tint);color:var(--rust);margin-top:10px;">${result.error}</div>`;
+      } else if(result){
+        html += `<div style="margin-top:10px;font-size:13px;">
+          <div>${result.matched.length} team(s) updated.${result.unmatched.length ? ` ${result.unmatched.length} row(s) didn't match a team.` : ''}</div>
+          ${result.unmatched.length ? `<div style="margin-top:6px;"><strong>Unmatched:</strong><ul style="margin:4px 0;padding-left:18px;color:var(--rust);font-size:12px;">${result.unmatched.map(n=>`<li>${n}</li>`).join('')}</ul></div>` : ''}
+        </div>`;
+      }
+      html += `<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line);">
+        <strong style="font-size:13px;">Currently set (${teamsWithBonus.length} team${teamsWithBonus.length===1?'':'s'})</strong>
+        ${teamsWithBonus.length
+          ? `<div class="table-wrap" style="margin-top:8px;"><table class="roster"><thead><tr><th>Team</th><th>Location</th><th>Team diversity</th><th>Total</th></tr></thead><tbody>
+              ${teamsWithBonus.map(t => `<tr><td>${this.adminTeamLabel(t)}</td><td>${(t.locationBonusPoints||0).toLocaleString()}</td><td>${(t.diverseTeamBonusPoints||0).toLocaleString()}</td><td>${((t.locationBonusPoints||0)+(t.diverseTeamBonusPoints||0)).toLocaleString()}</td></tr>`).join('')}
+            </tbody></table></div>`
+          : `<div class="empty">No diversity bonus points set yet.</div>`}
+      </div>`;
+    }
+    html += `</div>`;
+    return html;
+  },
+
   // Photo-proof submissions for one bonus challenge — targets who've
   // submitted, grouped by team (same concept as everywhere else in the
   // admin tools: a collapsed one-line group per team, expand to see who's
@@ -3674,6 +3777,16 @@ const App = {
     }
     const downloadCredsBtn = document.getElementById('btn-download-roster-creds');
     if(downloadCredsBtn) downloadCredsBtn.addEventListener('click', () => this.downloadRosterCredentials());
+    const syncDiversityBtn = document.getElementById('btn-sync-diversity');
+    if(syncDiversityBtn){
+      syncDiversityBtn.addEventListener('click', async () => {
+        const file = document.getElementById('in-diversity-file').files[0];
+        const pasted = document.getElementById('in-diversity-paste').value;
+        if(!file && !pasted.trim()){ alert('Choose a CSV file or paste the list first.'); return; }
+        const text = file ? await file.text() : pasted;
+        this.syncDiversityBonuses(text);
+      });
+    }
 
     root.querySelectorAll('[data-role="toggle-role"]').forEach(el => el.addEventListener('click', () => this.setRole(el.dataset.uid, el.dataset.newrole)));
     root.querySelectorAll('[data-role="view-user"]').forEach(el => el.addEventListener('click', () => this.toggleParticipantDetail(el.dataset.uid)));
