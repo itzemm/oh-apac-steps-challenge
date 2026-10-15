@@ -100,6 +100,25 @@ gitignored) listing every username and initial password from that run.
 Distribute these to each person, then **delete the file** — it's plaintext
 passwords sitting on disk.
 
+## Show each team's original spreadsheet number in the Admin tab
+
+If your roster's team names came from a spreadsheet with its own "Team1_",
+"Team2_"… numbering (stripped off before import, since that's not something
+participants should see), run this once after importing to tag each team
+with its number:
+
+```bash
+npm run set-team-display-index
+```
+
+Admins then see "Team1_AliensWalking" in the Admin tab's Participants list,
+Teams panel, dropdowns, and bonus-challenge award grids — participants still
+just see "AliensWalking" everywhere in their own view. The name→number
+mapping is hardcoded in the script from the original spreadsheet; it only
+touches teams whose current `name` matches one it recognizes, and reports
+any it doesn't (e.g. renamed since import) so you can fix those by hand.
+Non-destructive — safe to rerun.
+
 ## Add one participant
 
 For someone who joins after the initial import — no need to touch the CSV:

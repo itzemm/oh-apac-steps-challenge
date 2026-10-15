@@ -1070,7 +1070,7 @@ const App = {
   awardTargetsFor(b){
     return b.type === 'individual'
       ? Object.values(this.state.users).map(u => ({ id:u.uid, name:u.name }))
-      : Object.values(this.state.teams).map(t => ({ id:t.id, name:t.name }));
+      : Object.values(this.state.teams).map(t => ({ id:t.id, name:this.adminTeamLabel(t) }));
   },
   // Who actually submits proof — the same as awardTargetsFor() unless this
   // is a perMemberProof team challenge, where every user (not every team)
@@ -1196,6 +1196,17 @@ const App = {
     if(!team || !team.members || !team.members.length) return RACER_OTTERS[0];
     const idx = Math.max(0, team.members.indexOf(team.captainUid));
     return RACER_OTTERS[idx % RACER_OTTERS.length];
+  },
+  // Admin-only display label — shows the original "TeamN_" index from the
+  // roster spreadsheet alongside the team's real name (e.g. "Team1_
+  // AliensWalking"), set once via scripts/set-team-display-index.js after
+  // import. Participants never see this — everywhere in their own views
+  // (My team, Leaderboard, race tracks) still shows just team.name. Falls
+  // back to the plain name for any team with no assigned index (e.g. one
+  // added later via "Add a participant").
+  adminTeamLabel(team){
+    if(!team) return '';
+    return team.displayIndex != null ? `Team${team.displayIndex}_${team.name}` : team.name;
   },
   slugify(name){
     return name.toLowerCase().trim().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'') || 'team';
@@ -1672,7 +1683,7 @@ const App = {
     const rows = [header];
     Object.values(this.state.users).forEach(u => {
       const rec = this.state.allSteps[u.uid] || { days:{}, hasProof:{}, verified:{} };
-      const teamName = u.teamId && this.state.teams[u.teamId] ? this.state.teams[u.teamId].name : '';
+      const teamName = u.teamId && this.state.teams[u.teamId] ? this.adminTeamLabel(this.state.teams[u.teamId]) : '';
       const row = [u.name, u.email, u.country||'', teamName, u.role];
       for(let w=0; w<cfg.weeks; w++){
         for(let d=0; d<7; d++){
@@ -2903,7 +2914,7 @@ const App = {
     html += `<th>Role</th><th></th></tr></thead><tbody>`;
 
     teamIds.forEach(teamId => {
-      const teamName = teamId === '__none' ? 'No team' : (this.state.teams[teamId] ? this.state.teams[teamId].name : teamId);
+      const teamName = teamId === '__none' ? 'No team' : (this.state.teams[teamId] ? this.adminTeamLabel(this.state.teams[teamId]) : teamId);
       const groupRows = teamGroups[teamId];
       const groupMissing = groupRows.filter(({issues}) => issues.length > 0).length;
       const teamExpanded = this.state.participantMissingOnly || !!this.state.expandedParticipantTeams[teamId];
@@ -2921,9 +2932,9 @@ const App = {
         const teamCell = (prestart || u.role === 'admin')
           ? `<select data-role="assign-team" data-uid="${u.uid}" style="font-size:12px;padding:2px 4px;">
               <option value="">No team</option>
-              ${teamOptions.map(t => `<option value="${t.id}" ${u.teamId===t.id?'selected':''}>${t.name} (${(t.members||[]).length}/5)</option>`).join('')}
+              ${teamOptions.map(t => `<option value="${t.id}" ${u.teamId===t.id?'selected':''}>${this.adminTeamLabel(t)} (${(t.members||[]).length}/5)</option>`).join('')}
             </select>`
-          : (u.teamId ? (this.state.teams[u.teamId]?.name || u.teamId) : '—');
+          : (u.teamId ? (this.state.teams[u.teamId] ? this.adminTeamLabel(this.state.teams[u.teamId]) : u.teamId) : '—');
         html += `<tr data-uid="${u.uid}"><td>${u.name}</td><td class="col-email">${u.email}</td><td>${teamCell}</td>`;
         if(hasStart){
           for(let w=0; w<cfg.weeks; w++){
@@ -2968,7 +2979,7 @@ const App = {
         html += `<div style="margin-bottom:12px;"><button class="btn btn-sm btn-danger" id="btn-clear-all-teams">Clear all teams</button></div>`;
       }
       html += teams.length ? teams.map(t => `<div class="team-card">
-          <div><div class="tname">${t.name}</div><div class="tmeta">${t.members.length}/${TEAM_SIZE_LIMIT} · captain ${this.state.users[t.captainUid] ? this.state.users[t.captainUid].name : '—'} · ${t.members.map(m=>this.state.users[m]?this.state.users[m].name:m).join(', ')}</div></div>
+          <div><div class="tname">${this.adminTeamLabel(t)}</div><div class="tmeta">${t.members.length}/${TEAM_SIZE_LIMIT} · captain ${this.state.users[t.captainUid] ? this.state.users[t.captainUid].name : '—'} · ${t.members.map(m=>this.state.users[m]?this.state.users[m].name:m).join(', ')}</div></div>
         </div>`).join('') : `<div class="empty">No teams formed yet.</div>`;
     }
     html += `</div>`;
@@ -2995,7 +3006,7 @@ const App = {
     if(!this.adminSectionCollapsed('admins')){
     html += admins.length
       ? `<div class="table-wrap"><table class="roster"><thead><tr><th>Name</th><th class="col-email">Email</th><th>Team</th><th></th></tr></thead><tbody>`
-        + admins.map(u => `<tr><td>${u.name}</td><td class="col-email">${u.email}</td><td>${u.teamId ? (this.state.teams[u.teamId]?.name || u.teamId) : '—'}</td>
+        + admins.map(u => `<tr><td>${u.name}</td><td class="col-email">${u.email}</td><td>${u.teamId ? (this.state.teams[u.teamId] ? this.adminTeamLabel(this.state.teams[u.teamId]) : u.teamId) : '—'}</td>
             <td><button class="btn btn-sm" data-role="toggle-role" data-uid="${u.uid}" data-newrole="user">Demote</button></td></tr>`).join('')
         + `</tbody></table></div>`
       : `<div class="empty">No admins yet.</div>`;
@@ -3149,7 +3160,7 @@ const App = {
       return nameA.localeCompare(nameB);
     });
     teamIds.forEach(teamId => {
-      const teamName = teamId === '__none' ? 'No team' : (this.state.teams[teamId] ? this.state.teams[teamId].name : teamId);
+      const teamName = teamId === '__none' ? 'No team' : (this.state.teams[teamId] ? this.adminTeamLabel(this.state.teams[teamId]) : teamId);
       const groupRows = groups[teamId];
       const expanded = !!this.state.expandedProofTeams[teamId];
       html += `<div class="locked-week" data-role="toggle-proof-team" data-team="${teamId}">
@@ -3403,7 +3414,7 @@ const App = {
             // 'team' — either way, group by that person's own team.
             const u = this.state.users[t.id];
             teamId = (u && u.teamId) || '__none';
-            teamName = (u && u.teamId && this.state.teams[u.teamId]) ? this.state.teams[u.teamId].name : 'No team';
+            teamName = (u && u.teamId && this.state.teams[u.teamId]) ? this.adminTeamLabel(this.state.teams[u.teamId]) : 'No team';
           }
           if(!groups[teamId]) groups[teamId] = { teamName, rows: [] };
           groups[teamId].rows.push(t);
