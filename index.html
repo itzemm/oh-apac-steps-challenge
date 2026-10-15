@@ -560,7 +560,15 @@ const App = {
     expandedBonusSubmissionTeams: {},
     bonusHistoryOpenTrail: false,
     bonusHistoryOpenTeam: false,
-    adminCollapsed: {},
+    // All collapsed by default — an admin expands only the segment(s) they
+    // need, rather than scrolling past a 160+-person Participants table and
+    // dozens of bonus challenges just to reach Admins or Photo proof.
+    adminCollapsed: {
+      settings: true, 'bonus-add': true, 'bonus-manage': true, 'add-participant': true,
+      'roster-import': true, participants: true, teams: true, admins: true, 'photo-proof': true
+    },
+    // Keyed by bonus challenge id; absent/true = collapsed (the default —
+    // see toggle-bonus-card), explicit false = expanded.
     bonusCardCollapsed: {}
   },
 
@@ -3324,7 +3332,7 @@ const App = {
       const scopeLabel = b.scope === 'week' && Number.isInteger(b.weekIndex) ? `<span class="type-pill">Week ${b.weekIndex+1}</span>` : '';
       const photoWeekLabel = b.scope !== 'week' && Number.isInteger(b.photoWeekIndex) ? `<span class="type-pill">Photo: Week ${b.photoWeekIndex+1} only</span>` : '';
       const perMemberLabel = b.type === 'team' && b.perMemberProof ? `<span class="type-pill">Individual proof</span>` : '';
-      const cardCollapsed = !!this.state.bonusCardCollapsed[b.id];
+      const cardCollapsed = this.state.bonusCardCollapsed[b.id] !== false;
       html += `<div class="challenge-card">
         <div class="ctop">
           <div><span class="ctitle">${b.title}</span><span class="type-pill">${b.type==='individual'?'Individual':'Team'}</span>${scopeLabel}${b.requirePhoto?'<span class="type-pill">Photo required</span>':''}${photoWeekLabel}${perMemberLabel}${b.active===false?'<span class="type-pill">Disabled</span>':''}${b.description?`<div class="cdesc">${b.description}</div>`:''}${b.reminder?`<div style="margin-top:4px;font-size:12px;color:#7A5A11;background:var(--amber-tint);padding:3px 8px;border-radius:6px;display:inline-block;">🔔 ${b.reminder}</div>`:''}</div>
@@ -3550,7 +3558,8 @@ const App = {
     }));
     root.querySelectorAll('[data-role="toggle-bonus-card"]').forEach(el => el.addEventListener('click', () => {
       const id = el.dataset.id;
-      this.state.bonusCardCollapsed[id] = !this.state.bonusCardCollapsed[id];
+      const collapsed = this.state.bonusCardCollapsed[id] !== false;
+      this.state.bonusCardCollapsed[id] = collapsed ? false : true;
       this.render();
     }));
     root.querySelectorAll('[data-role="toggle-photo-category"]').forEach(el => el.addEventListener('click', () => {
