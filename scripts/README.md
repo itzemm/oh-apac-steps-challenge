@@ -149,6 +149,22 @@ them. Asks you to type `yes` to confirm first, since it changes real
 people's logins; pass `--yes` to skip the prompt. The team's internal id
 isn't changed (only its `name` field) — that id is never shown anywhere.
 
+## Rename one participant
+
+Same idea as renaming a team, but for one person — their display name,
+username, and password all change (not the team's name, not anyone else on
+it):
+
+```bash
+npm run rename-participant -- "OOE" "Daniel" "Dani"
+```
+
+Finds the member currently named "Daniel" on team "OOE", renames them to
+"Dani", and resets their username/password to `OOE_Dani` (same convention
+as everywhere else). Flags their profile to show the change-password
+reminder again. Asks you to type `yes` to confirm first, since it changes a
+real login; pass `--yes` to skip the prompt.
+
 ## Reset someone's password
 
 If a participant forgets their password, there's no self-service reset —
