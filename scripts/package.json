@@ -11,6 +11,7 @@
     "import-roster": "node import-roster.js",
     "add-participant": "node add-participant.js",
     "delete-participant": "node delete-participant.js",
+    "wipe-participants": "node wipe-participants.js",
     "reset-password": "node reset-password.js"
   },
   "dependencies": {

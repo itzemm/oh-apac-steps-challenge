@@ -52,6 +52,23 @@ This resets the password back to `admin_emily` and flags the profile so the
 app shows the change-password reminder again on next login — it does not
 touch `role`.
 
+## Wipe all participants before a fresh import
+
+If you've been testing with placeholder names/teams and want a clean slate
+before importing the real roster:
+
+```bash
+npm run wipe-participants
+```
+
+**Permanently** deletes every non-admin account's login, profile, and step/
+proof history, and every team. Admin accounts, `config` (start date, weeks,
+step limit), and bonus challenge definitions (title/points/dates) are left
+alone — only their per-person submissions/reviews are cleared, since those
+would otherwise point at accounts that no longer exist. Asks you to type
+`yes` to confirm first, since this can't be undone; pass `--yes` to skip the
+prompt.
+
 ## Import a team roster
 
 1. Copy `roster.example.csv` to `roster.csv` and fill in real names. Columns:
