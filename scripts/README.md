@@ -132,6 +132,23 @@ the 5-person limit), prints their username and initial password the same
 way `import-roster.js` does. Add `--captain` to make them the team's
 captain. Safe to re-run for the same name — it won't create a duplicate.
 
+## Rename a team
+
+Since usernames are `TeamName_PersonName`, renaming a team means every
+member's login needs to change too — not just the team's display name:
+
+```bash
+npm run rename-team -- "OneTeamOneDirectionEndlessSteps" "OOE"
+```
+
+For each member, resets their email/username to match the new team name
+and their password back to that new username (same convention as
+`import-roster.js`), and flags their profile to show the change-password
+reminder again. Prints each new username/password so you can redistribute
+them. Asks you to type `yes` to confirm first, since it changes real
+people's logins; pass `--yes` to skip the prompt. The team's internal id
+isn't changed (only its `name` field) — that id is never shown anywhere.
+
 ## Reset someone's password
 
 If a participant forgets their password, there's no self-service reset —

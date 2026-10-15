@@ -12,6 +12,7 @@
     "add-participant": "node add-participant.js",
     "delete-participant": "node delete-participant.js",
     "wipe-participants": "node wipe-participants.js",
+    "rename-team": "node rename-team.js",
     "set-team-display-index": "node set-team-display-index.js",
     "reset-password": "node reset-password.js"
   },
