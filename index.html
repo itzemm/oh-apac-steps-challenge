@@ -371,6 +371,15 @@ const DEFAULT_CONFIG = { name: 'OH APAC Steps Challenge', startDate: null, weeks
 // comment for the single UTC instant (06:30) this corresponds to in each
 // zone, and the AEST/AEDT caveat.
 const DEADLINE_TIME_LABEL = '2:30pm SGT/HKT · 12:00pm IST · 5:30pm AEDT';
+// One otter look per team-roster slot (team size tops out at TEAM_SIZE_LIMIT)
+// — a member's look is RACER_OTTERS[their index in team.members], so the
+// same person always races as the same otter, and a team's own mascot
+// (wherever it's shown as a single entity, not broken out by member) is
+// just whichever look that puts on its captain — see teamMascot().
+const RACER_OTTERS = [
+  'assets/otters/otter-racer-1.png', 'assets/otters/otter-racer-2.png', 'assets/otters/otter-racer-3.png',
+  'assets/otters/otter-racer-4.png', 'assets/otters/otter-racer-5.png'
+];
 
 // ---------- "Did you know?" fun facts ----------
 // Every ref is compared against a derived quantity (distance walked, calories
@@ -1168,6 +1177,15 @@ const App = {
     const me = this.state.users[this.state.identity.uid];
     if(!me || !me.teamId) return null;
     return this.state.teams[me.teamId] || null;
+  },
+  // Wherever a team is shown as one entity (not broken out by member, the
+  // way its own week race is) — its own header, or the team-vs-team
+  // leaderboard — it's represented by whichever RACER_OTTERS look its
+  // captain races as (same index-in-members mapping as the week race).
+  teamMascot(team){
+    if(!team || !team.members || !team.members.length) return RACER_OTTERS[0];
+    const idx = Math.max(0, team.members.indexOf(team.captainUid));
+    return RACER_OTTERS[idx % RACER_OTTERS.length];
   },
   slugify(name){
     return name.toLowerCase().trim().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'') || 'team';
@@ -2552,7 +2570,7 @@ const App = {
         <div class="race-name"></div>
         <div class="race-axis"><span>Start</span><span>Finish</span></div>
       </div>
-      ${this.renderRaceTrack(raceEntries, 'assets/otters/otter-lion.png', { unit:'steps', locked })}
+      ${this.renderRaceTrack(raceEntries, RACER_OTTERS, { unit:'steps', locked })}
     </div>`;
   },
 
@@ -2601,7 +2619,7 @@ const App = {
 
     return `
       <div class="panel">
-        <h3><img class="header-logo" src="assets/otters/otter-sg.png" alt="">${team.name} <span class="tag tag-open" style="margin-left:8px;">${team.members.length}/${TEAM_SIZE_LIMIT}</span></h3>
+        <h3><img class="header-logo" src="${this.teamMascot(team)}" alt="">${team.name} <span class="tag tag-open" style="margin-left:8px;">${team.members.length}/${TEAM_SIZE_LIMIT}</span></h3>
         ${membersHtml}
         <div style="margin-top:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
           <div style="font-size:13px;color:var(--ink-soft);">Week ${currentWeek+1} total: ${teamTotal.toLocaleString()} steps${teamBonus ? ` <span style="color:var(--ink-soft);">(${teamStepsThisWeek.toLocaleString()} steps + ${teamBonus.toLocaleString()} bonus)</span>` : ''}</div>
@@ -2629,19 +2647,25 @@ const App = {
   // week is actually over (opts.locked left undefined/true, e.g. the
   // leaderboard's overall ranking, or a team's past week), the true leader
   // reaches the finish line for real.
+  // otterSrc is either one image path (used for every lane, e.g. the
+  // Leaderboard's individual/team race) or an array of paths, cycled by lane
+  // index — e.g. "My team"'s week race gives each member their own look
+  // (team size tops out at 5, same as the otter-racer-*.png set).
   renderRaceTrack(entries, otterSrc, opts){
     opts = opts || {};
     if(!entries.length) return `<div class="empty">No one in this race yet.</div>`;
     const max = opts.max || Math.max(1, ...entries.map(e=>e.value));
     const capPct = opts.locked === false ? 90 : 100;
+    const otterList = Array.isArray(otterSrc) ? otterSrc : [otterSrc];
     return entries.map((e, i) => {
       const pct = Math.min(capPct, Math.max(2, (e.value/max)*100));
       const delay = (i % 5) * 0.11;
       const arrived = capPct === 100 && pct >= 100;
+      const src = otterList[i % otterList.length];
       return `<div class="race-row">
         <div class="race-name">${e.name}${opts.unit ? `<div class="race-value">${e.value.toLocaleString()} ${opts.unit}</div>` : ''}</div>
         <div class="race-lane-track">
-          <img class="race-lane-otter" src="${otterSrc}" alt="" style="left:${pct.toFixed(1)}%;animation-delay:${delay.toFixed(2)}s;${arrived ? 'animation-play-state:paused;' : ''}">
+          <img class="race-lane-otter" src="${src}" alt="" style="left:${pct.toFixed(1)}%;animation-delay:${delay.toFixed(2)}s;${arrived ? 'animation-play-state:paused;' : ''}">
           <div class="race-lane-finish"></div>
         </div>
       </div>`;
@@ -2665,8 +2689,12 @@ const App = {
   // show just the viewer's own row plus a toggle to reveal everyone else,
   // so they can always find themselves without necessarily seeing the
   // whole roster.
+  // otterSrc is either one image path (every podium block, e.g. individuals)
+  // or a function(entry) => path for a per-entry look (e.g. each team's own
+  // mascot via teamMascot()).
   renderLeaderboardBoard(entries, unit, myId, otterSrc){
     if(!entries.length) return `<div class="empty">No one to rank yet.</div>`;
+    const otterFor = typeof otterSrc === 'function' ? otterSrc : () => otterSrc;
     let rank = 0;
     const ranked = entries.map((e, i) => {
       if(i === 0 || e.value !== entries[i-1].value) rank = i + 1;
@@ -2679,7 +2707,7 @@ const App = {
 
     const podiumHtml = `<div class="podium-wrap">${top3.map(e => `
       <div class="podium-block rank-${e.rank}${e.id===myId?' mine':''}">
-        <img class="podium-otter" src="${otterSrc}" alt="">
+        <img class="podium-otter" src="${otterFor(e)}" alt="">
         <div class="podium-rank">${e.rank}</div>
         <div class="podium-name">${e.name}</div>
         <div class="podium-value">${e.value.toLocaleString()} ${unit}</div>
@@ -2749,7 +2777,7 @@ const App = {
 
     const myTeam = this.getMyTeam();
     const board = this.state.lbMode === 'team'
-      ? this.renderLeaderboardBoard(teams, unit, myTeam ? myTeam.id : null, 'assets/otters/otter-sg.png')
+      ? this.renderLeaderboardBoard(teams, unit, myTeam ? myTeam.id : null, e => this.teamMascot(this.state.teams[e.id]))
       : this.renderLeaderboardBoard(individuals, unit, this.state.identity.uid, 'assets/otters/otter-lion.png');
 
     return `
