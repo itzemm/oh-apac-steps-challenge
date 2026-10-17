@@ -1,3 +1,4 @@
 node_modules/
 service-account-key.json
 generated-credentials.csv
+all-credentials.csv

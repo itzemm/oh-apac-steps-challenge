@@ -165,6 +165,27 @@ as everywhere else). Flags their profile to show the change-password
 reminder again. Asks you to type `yes` to confirm first, since it changes a
 real login; pass `--yes` to skip the prompt.
 
+## Get a full, accurate username/password list for everyone
+
+Firebase never exposes an existing password to anyone, admin included — so
+if you need a complete, guaranteed-correct credentials list (e.g. the
+original one got deleted, or you're not sure who's changed theirs since),
+the only way is to reset every participant's password back to match their
+username:
+
+```bash
+npm run reset-all-passwords
+```
+
+Leaves usernames/emails untouched — only resets the password, for anyone
+whose account has drifted from "password = username" (because they logged
+in and changed it). Flags every profile to show the change-password
+reminder again. Writes `all-credentials.csv` (gitignored) with every
+Team/Name/Username/Password row — distribute it, then delete the file.
+Admin accounts are skipped (see the script's own comment for why); reset
+one specifically with `reset-password.js` below. Asks you to type `yes` to
+confirm first, since it overwrites real passwords; pass `--yes` to skip.
+
 ## Reset someone's password
 
 If a participant forgets their password, there's no self-service reset —
