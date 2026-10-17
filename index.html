@@ -537,6 +537,11 @@ const App = {
     modal: null,
     draftSteps: {},
     editingDays: {},
+    // Keyed by weekIndex / bonus challenge id — true while that photo is
+    // still compressing+uploading, so the UI can show "Uploading…" instead
+    // of silently sitting on the old upload prompt until it's done.
+    proofUploading: {},
+    bonusProofUploading: {},
     raceExpandedWeeks: {},
     expandedProofTeams: {},
     bonusManageFilter: 'all',
@@ -1131,14 +1136,26 @@ const App = {
     this.render();
   },
 
+  // Warns before leaving the page while any photo is still compressing or
+  // uploading, so a slow connection doesn't tempt someone into closing the
+  // tab (or hitting refresh) mid-upload and silently losing it.
+  updateUploadGuard(){
+    const anyUploading = Object.values(this.state.proofUploading).some(Boolean) || Object.values(this.state.bonusProofUploading).some(Boolean);
+    window.onbeforeunload = anyUploading ? (e) => { e.preventDefault(); e.returnValue = ''; } : null;
+  },
   async handleWeekProofFile(weekIndex, inputEl){
     const file = inputEl.files[0];
     if(!file) return;
+    this.state.proofUploading[weekIndex] = true;
+    this.updateUploadGuard();
+    this.render();
     try{
       const dataUrl = await this.compressImage(file);
       await this.saveMyProof(weekIndex, dataUrl);
-      this.render();
     }catch(e){ alert(e && e.message ? e.message : 'Could not process that image. Try a different file.'); }
+    this.state.proofUploading[weekIndex] = false;
+    this.updateUploadGuard();
+    this.render();
   },
 
   // Firestore hard-caps a document at 1 MiB. A base64 data URL's character
@@ -1454,11 +1471,16 @@ const App = {
   async handleBonusProofFile(challengeId, inputEl){
     const file = inputEl.files[0];
     if(!file) return;
+    this.state.bonusProofUploading[challengeId] = true;
+    this.updateUploadGuard();
+    this.render();
     try{
       const dataUrl = await this.compressImage(file);
       await this.submitBonusProof(challengeId, dataUrl);
-      this.render();
     }catch(e){ alert(e && e.message ? e.message : 'Could not process that image. Try a different file.'); }
+    this.state.bonusProofUploading[challengeId] = false;
+    this.updateUploadGuard();
+    this.render();
   },
   async submitBonusProof(challengeId, dataUrl){
     const ch = this.state.bonus[challengeId];
@@ -2387,12 +2409,15 @@ const App = {
     else if(wStatus === 'future') tag = `<span class="tag tag-upcoming">Not yet</span>`;
 
     let proofRow = '';
+    const uploadingProof = !!this.state.proofUploading[weekIndex];
     if(wStatus === 'editable'){
       proofRow = `<div class="wbody" style="margin-bottom:12px;">
         ${proofEntry ? `<img class="thumb" src="${proofEntry.proof}" data-role="thumb" data-src="${proofEntry.proof}">` : `<div class="thumb-placeholder">no proof</div>`}
-        <label class="file-label">${proofEntry ? 'Replace this week’s proof' : 'Upload proof for this week'}<input type="file" accept="image/*" data-week="${weekIndex}" data-role="proof-input"></label>
-        ${proofEntry ? `<button class="btn btn-sm btn-danger" data-week="${weekIndex}" data-role="remove-proof">Remove</button>` : ''}
-        ${weekTotal && !proofEntry ? `<span class="tag tag-upcoming">Remember to add proof before the week locks</span>` : ''}
+        ${uploadingProof
+          ? `<div class="loading">⏳ Uploading photo — don't close this page…</div>`
+          : `<label class="file-label">${proofEntry ? 'Replace this week’s proof' : 'Upload proof for this week'}<input type="file" accept="image/*" data-week="${weekIndex}" data-role="proof-input"></label>`}
+        ${proofEntry && !uploadingProof ? `<button class="btn btn-sm btn-danger" data-week="${weekIndex}" data-role="remove-proof">Remove</button>` : ''}
+        ${weekTotal && !proofEntry && !uploadingProof ? `<span class="tag tag-upcoming">Remember to add proof before the week locks</span>` : ''}
       </div>`;
     } else if(wStatus === 'locked'){
       proofRow = `<div class="wbody" style="margin-bottom:12px;">
@@ -2532,14 +2557,17 @@ const App = {
       }
     }
     let proofSection = '';
+    const uploadingBonusProof = !!this.state.bonusProofUploading[b.id];
     if(!joinPrompt && b.requirePhoto && targetId){
       if(photoWindowNotOpenYet){
         proofSection = `<div class="wbody" style="margin-top:8px;"><span class="tag tag-upcoming">Photo proof opens during Week ${photoWeekIndex+1}</span></div>${progressHtml}`;
       } else if(canEdit){
         proofSection = `<div class="wbody" style="margin-top:8px;">
           ${thumbHtml}
-          <label class="file-label">${submission ? 'Replace your proof photo' : 'Upload proof photo'}<input type="file" accept="image/*" data-bonus="${b.id}" data-role="bonus-proof-input"></label>
-          ${submission ? `<button class="btn btn-sm btn-danger" data-bonus="${b.id}" data-role="remove-bonus-proof">Remove</button>` : ''}
+          ${uploadingBonusProof
+            ? `<div class="loading">⏳ Uploading photo — don't close this page…</div>`
+            : `<label class="file-label">${submission ? 'Replace your proof photo' : 'Upload proof photo'}<input type="file" accept="image/*" data-bonus="${b.id}" data-role="bonus-proof-input"></label>`}
+          ${submission && !uploadingBonusProof ? `<button class="btn btn-sm btn-danger" data-bonus="${b.id}" data-role="remove-bonus-proof">Remove</button>` : ''}
         </div>${progressHtml}`;
       } else if(submission){
         proofSection = `<div class="wbody" style="margin-top:8px;">
