@@ -2957,11 +2957,20 @@ const App = {
       if(!teamGroups[teamId]) teamGroups[teamId] = [];
       teamGroups[teamId].push(row);
     });
+    // Sorted by each team's displayIndex (its "TeamN_" number — see
+    // adminTeamLabel()) rather than alphabetically by name, so this admin
+    // list reads in the same order as the roster spreadsheet it came from.
+    // A team with no index yet (e.g. one added without running
+    // set-team-display-index.js) sorts after every numbered one, by name.
     const teamIds = Object.keys(teamGroups).sort((a,b) => {
       if(a === '__none') return 1;
       if(b === '__none') return -1;
-      const nameA = this.state.teams[a] ? this.state.teams[a].name : a;
-      const nameB = this.state.teams[b] ? this.state.teams[b].name : b;
+      const teamA = this.state.teams[a], teamB = this.state.teams[b];
+      const idxA = teamA && teamA.displayIndex != null ? teamA.displayIndex : Infinity;
+      const idxB = teamB && teamB.displayIndex != null ? teamB.displayIndex : Infinity;
+      if(idxA !== idxB) return idxA - idxB;
+      const nameA = teamA ? teamA.name : a;
+      const nameB = teamB ? teamB.name : b;
       return nameA.localeCompare(nameB);
     });
 
