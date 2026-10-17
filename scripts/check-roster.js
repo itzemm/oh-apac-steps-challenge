@@ -3,9 +3,13 @@
 // full 34-team, 170-person roster this event expects (lib/master-roster.js),
 // person by person -- not just team/member counts. Flags a missing team, a
 // team name it doesn't recognize, a missing or unexpected person on an
-// otherwise-known team, and anyone whose stored account email doesn't match
-// the username their team+name should produce (so they'd be logging in
-// wrong). Makes no changes.
+// otherwise-known team, anyone whose stored account email doesn't match the
+// username their team+name should produce (so they'd be logging in wrong),
+// a team-member uid with no matching profile, a uid shared across two
+// teams, and a team member who's actually role:'admin' -- each of the last
+// three can make every team individually "check out" while the headline
+// non-admin participant count still comes up short of 170. Makes no
+// changes.
 //
 // Usage: node check-roster.js
 
@@ -84,6 +88,17 @@ async function main() {
 
     const profiles = members.map(uid => usersById[uid]).filter(Boolean);
     const foundNames = new Set(profiles.map(p => p.name));
+
+    // A team member who's actually role:'admin' (e.g. promoted via the
+    // Admin tab, by design or by accident) still satisfies every check
+    // above by name, but is invisible to the "non-admin participant" count
+    // at the top -- another way for every team to "pass" while that count
+    // comes up short of 170.
+    const adminMembers = profiles.filter(p => p.role === 'admin');
+    if (adminMembers.length) {
+      anyPersonIssue = true;
+      console.log(`\n${teamName}: member(s) with role 'admin' (excluded from the participant count above, even though they're on this team): ${adminMembers.map(p => p.name).join(', ')}`);
+    }
 
     const missingPeople = expectedNames.filter(n => !foundNames.has(n));
     if (missingPeople.length) {
