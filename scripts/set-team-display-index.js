@@ -16,24 +16,7 @@
 // real names) is reported and left untouched — rerun is safe.
 
 import { initAdmin } from './lib/firebase-admin-init.js';
-
-// From the original spreadsheet, in order. Team16 is listed under its
-// current name "OOE" (renamed from "OneTeamOneDirectionEndlessSteps" via
-// rename-team.js — this map always needs to track a team's CURRENT name,
-// not its name at the time this list was written). Team26/27 were
-// originally excluded as TBD but are now named — TheGallopers and
-// MarketMovers — so they're included below too.
-const NAME_TO_INDEX = {
-  AliensWalking: 1, ASCteam: 2, BEReadySetGo: 3, Beginnersluck: 4, BOBOGO: 5,
-  BomberGirl: 6, Breakaleg: 7, CoffeeBlazer: 8, FeetFleet: 9, HeaWeGo: 10,
-  Marunouchine: 11, MilesAhead: 12, OHSydneyTeam: 13, OhhWalkers: 14,
-  OHttersWalkers: 15, OOE: 16, OtterlyOHmazing: 17,
-  RedHotChilliSteppers: 18, RegionalWealthnessChampions: 19, Skywalker: 20,
-  SoleMates: 21, SOWDhurandhar: 22, StepUpSquad: 23, Stepswithoutborders: 24,
-  MaxWalkstappen: 25, TheGallopers: 26, MarketMovers: 27, TeamFSO: 28,
-  TeamTaiwan: 29, TheStepHustlers: 30, TheWonderWalkers: 31, WAE: 32,
-  Walkaholics: 33, WeThoughtthiswasOptional: 34
-};
+import { NAME_TO_INDEX } from './lib/team-index-map.js';
 
 async function main() {
   const { db } = initAdmin();

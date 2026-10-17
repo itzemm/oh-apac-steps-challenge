@@ -16,6 +16,7 @@
     "rename-participant": "node rename-participant.js",
     "reset-all-passwords": "node reset-all-passwords.js",
     "set-team-display-index": "node set-team-display-index.js",
+    "check-roster": "node check-roster.js",
     "reset-password": "node reset-password.js"
   },
   "dependencies": {
