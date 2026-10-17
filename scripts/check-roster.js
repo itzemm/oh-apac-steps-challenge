@@ -43,12 +43,45 @@ async function main() {
     unexpectedTeams.forEach(n => console.log(`  "${n}" (${(teamsByName[n].members || []).length} member(s))`));
   }
 
-  let anyPersonIssue = false;
+  // A uid listed as a member of two different teams would make both teams
+  // "find" their expected person without anything actually being missing
+  // from either team's own member-name check — the real gap only shows up
+  // as a lower overall participant count. Catch that directly instead.
+  const teamsByUid = {};
+  for (const teamName of expectedTeamNames) {
+    const team = teamsByName[teamName];
+    if (!team) continue;
+    (team.members || []).forEach(uid => {
+      if (!teamsByUid[uid]) teamsByUid[uid] = [];
+      teamsByUid[uid].push(teamName);
+    });
+  }
+  const sharedUids = Object.entries(teamsByUid).filter(([, teams]) => teams.length > 1);
+  if (sharedUids.length) {
+    console.log('\nUid(s) listed as a member on more than one team (the real issue behind a lower total than expected, even if every team "checks out"):');
+    sharedUids.forEach(([uid, teams]) => {
+      const name = usersById[uid] ? usersById[uid].name : '(no profile)';
+      console.log(`  ${uid} (${name}) is on: ${teams.join(', ')}`);
+    });
+  }
+
+  let anyPersonIssue = sharedUids.length > 0;
   for (const teamName of expectedTeamNames) {
     const team = teamsByName[teamName];
     if (!team) continue; // already reported above as a missing team
     const expectedNames = MASTER_ROSTER[teamName] || [];
     const members = team.members || [];
+
+    // A uid in team.members with no matching users/{uid} doc is a broken
+    // reference — e.g. their Auth account and team slot were created but
+    // their own profile write never completed. Report it explicitly instead
+    // of silently dropping it, which would hide exactly this kind of gap.
+    const orphanUids = members.filter(uid => !usersById[uid]);
+    if (orphanUids.length) {
+      anyPersonIssue = true;
+      console.log(`\n${teamName}: ${orphanUids.length} member uid(s) with no matching profile: ${orphanUids.join(', ')}`);
+    }
+
     const profiles = members.map(uid => usersById[uid]).filter(Boolean);
     const foundNames = new Set(profiles.map(p => p.name));
 
