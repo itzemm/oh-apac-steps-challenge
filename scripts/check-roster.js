@@ -1,50 +1,80 @@
 #!/usr/bin/env node
 // Read-only sanity check: compares what's actually in Firestore against the
-// full 34-team, 170-person roster this event expects, and flags anything
-// that doesn't line up -- a missing team, a team without exactly 5 members,
-// or a team name that doesn't match any of the 34 expected ones (e.g. a
-// typo, or one renamed without updating lib/team-index-map.js). Makes no
-// changes.
+// full 34-team, 170-person roster this event expects (lib/master-roster.js),
+// person by person -- not just team/member counts. Flags a missing team, a
+// team name it doesn't recognize, a missing or unexpected person on an
+// otherwise-known team, and anyone whose stored account email doesn't match
+// the username their team+name should produce (so they'd be logging in
+// wrong). Makes no changes.
 //
 // Usage: node check-roster.js
 
 import { initAdmin } from './lib/firebase-admin-init.js';
 import { NAME_TO_INDEX } from './lib/team-index-map.js';
+import { MASTER_ROSTER } from './lib/master-roster.js';
+import { toUsername, usernameToEmail } from './lib/naming.js';
 
 async function main() {
   const { db } = initAdmin();
   const [teamsSnap, usersSnap] = await Promise.all([db.collection('teams').get(), db.collection('users').get()]);
 
-  const participantCount = usersSnap.docs.filter(d => d.data().role !== 'admin').length;
-  const teams = teamsSnap.docs.map(d => d.data());
+  const usersById = {};
+  usersSnap.forEach(d => { usersById[d.id] = d.data(); });
+  const participantCount = Object.values(usersById).filter(u => u.role !== 'admin').length;
 
-  console.log(`Found ${teams.length} team(s) and ${participantCount} non-admin participant(s). Expected 34 teams, 170 people.\n`);
+  const teamsByName = {};
+  teamsSnap.forEach(d => { teamsByName[d.data().name] = { id: d.id, ...d.data() }; });
 
-  const foundNames = new Set(teams.map(t => t.name));
-  const expectedNames = Object.keys(NAME_TO_INDEX);
-  const missing = expectedNames.filter(n => !foundNames.has(n)).sort((a, b) => NAME_TO_INDEX[a] - NAME_TO_INDEX[b]);
-  const unexpected = teams.filter(t => !(t.name in NAME_TO_INDEX));
-  const understaffed = teams.filter(t => (t.members || []).length !== 5);
+  console.log(`Found ${teamsSnap.size} team(s) and ${participantCount} non-admin participant(s). Expected 34 teams, 170 people.\n`);
 
-  if (missing.length) {
+  const expectedTeamNames = Object.keys(NAME_TO_INDEX);
+  const foundTeamNames = new Set(Object.keys(teamsByName));
+  const missingTeams = expectedTeamNames.filter(n => !foundTeamNames.has(n)).sort((a, b) => NAME_TO_INDEX[a] - NAME_TO_INDEX[b]);
+  const unexpectedTeams = [...foundTeamNames].filter(n => !(n in NAME_TO_INDEX));
+
+  if (missingTeams.length) {
     console.log('Missing team(s) — expected but not found in Firestore:');
-    missing.forEach(n => console.log(`  Team${NAME_TO_INDEX[n]}_${n}`));
+    missingTeams.forEach(n => console.log(`  Team${NAME_TO_INDEX[n]}_${n}`));
   } else {
     console.log('All 34 expected teams are present by name.');
   }
-
-  if (unexpected.length) {
-    console.log("\nTeam(s) found with a name not in the expected list (could be a typo, or a rename/new team not yet added to lib/team-index-map.js):");
-    unexpected.forEach(t => console.log(`  "${t.name}" (${(t.members || []).length} member(s))`));
+  if (unexpectedTeams.length) {
+    console.log('\nTeam(s) found with a name not in the expected list (typo, or a rename not yet reflected in lib/team-index-map.js):');
+    unexpectedTeams.forEach(n => console.log(`  "${n}" (${(teamsByName[n].members || []).length} member(s))`));
   }
 
-  if (understaffed.length) {
-    console.log("\nTeam(s) without exactly 5 members:");
-    understaffed.forEach(t => console.log(`  ${t.name}: ${(t.members || []).length} member(s)`));
+  let anyPersonIssue = false;
+  for (const teamName of expectedTeamNames) {
+    const team = teamsByName[teamName];
+    if (!team) continue; // already reported above as a missing team
+    const expectedNames = MASTER_ROSTER[teamName] || [];
+    const members = team.members || [];
+    const profiles = members.map(uid => usersById[uid]).filter(Boolean);
+    const foundNames = new Set(profiles.map(p => p.name));
+
+    const missingPeople = expectedNames.filter(n => !foundNames.has(n));
+    if (missingPeople.length) {
+      anyPersonIssue = true;
+      console.log(`\n${teamName}: missing expected member(s): ${missingPeople.join(', ')}`);
+    }
+
+    for (const profile of profiles) {
+      if (!expectedNames.includes(profile.name)) {
+        anyPersonIssue = true;
+        console.log(`\n${teamName}: has "${profile.name}", who isn't in the confirmed roster for this team`);
+        continue;
+      }
+      const expectedUsername = toUsername(teamName, profile.name);
+      const expectedEmail = usernameToEmail(expectedUsername);
+      if (profile.email !== expectedEmail) {
+        anyPersonIssue = true;
+        console.log(`\n${teamName}: ${profile.name}'s account email is "${profile.email}", expected "${expectedEmail}" — their username should be "${expectedUsername}"`);
+      }
+    }
   }
 
-  if (!missing.length && !unexpected.length && !understaffed.length && participantCount === 170) {
-    console.log('\nEverything checks out: 34 teams, 170 participants, 5 members each.');
+  if (!missingTeams.length && !unexpectedTeams.length && !anyPersonIssue && participantCount === 170) {
+    console.log('\nEverything checks out: 34 teams, 170 participants, correct usernames throughout.');
   }
 }
 
