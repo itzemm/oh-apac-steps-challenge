@@ -14,6 +14,7 @@
     "wipe-participants": "node wipe-participants.js",
     "rename-team": "node rename-team.js",
     "rename-participant": "node rename-participant.js",
+    "reset-all-passwords": "node reset-all-passwords.js",
     "set-team-display-index": "node set-team-display-index.js",
     "reset-password": "node reset-password.js"
   },
