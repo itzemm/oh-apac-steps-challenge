@@ -119,19 +119,23 @@ touches teams whose current `name` matches one it recognizes, and reports
 any it doesn't (e.g. renamed since import) so you can fix those by hand.
 Non-destructive — safe to rerun.
 
-## Check the roster for anything missing
+## Check the roster for anything missing or wrong
 
 Read-only sanity check against the full 34-team, 170-person roster this
-event expects:
+event expects (`lib/master-roster.js`) — person by person, not just counts:
 
 ```bash
 npm run check-roster
 ```
 
-Reports the actual team/participant counts in Firestore, any of the 34
-expected teams that aren't found, any team name it doesn't recognize (a
-typo, or a rename/new team not yet added to `lib/team-index-map.js`), and
-any team without exactly 5 members. Makes no changes — safe to run anytime.
+Reports the actual team/participant counts, any of the 34 expected teams
+that aren't found, any team name it doesn't recognize (a typo, or a rename
+not yet reflected in `lib/team-index-map.js`/`lib/master-roster.js`), any
+missing or unexpected person on an otherwise-known team, and anyone whose
+stored account email doesn't match the username their team+name should
+produce (meaning they'd be logging in with the wrong credentials). Makes no
+changes — safe to run anytime. Keep both `lib/*.js` roster files in sync
+whenever a team or person is renamed.
 
 ## Add one participant
 
