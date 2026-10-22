@@ -151,17 +151,25 @@ img{max-width:100%;}
   width:31%;max-width:130px;border-radius:10px 10px 0 0;padding:10px 6px 12px;
   background:linear-gradient(180deg,var(--forest-tint) 0%,#D9A3A8 100%);
   border:1px solid var(--line);border-bottom:none;}
-.podium-block.rank-1{height:168px;order:2;background:linear-gradient(180deg,var(--amber-tint) 0%,#E8CE8E 100%);}
-.podium-block.rank-2{height:136px;order:1;}
-.podium-block.rank-3{height:108px;order:3;}
+/* min-height, not height — a fixed height shorter than the block's actual
+   content (otter + rank + name + steps) forced flexbox's default shrink
+   behavior to squeeze that content, which could compress the team-name
+   line down to nothing (invisible, even though the text was technically
+   still there) — worst for 3rd place, whose box was the shortest. A floor
+   still gives the three blocks their stepped "podium" look whenever
+   content comfortably fits, but never clips a name again regardless of its
+   length. flex-shrink:0 below is the same guarantee belt-and-braces. */
+.podium-block.rank-1{min-height:168px;order:2;background:linear-gradient(180deg,var(--amber-tint) 0%,#E8CE8E 100%);}
+.podium-block.rank-2{min-height:136px;order:1;}
+.podium-block.rank-3{min-height:108px;order:3;}
 /* The viewer's own podium block (or collapsed row, below) gets a ring
    around it so they can spot themselves at a glance, layered on top of
    whichever rank styling (gold/silver/bronze) already applies. */
 .podium-block.mine{outline:3px solid var(--forest);outline-offset:2px;}
-.podium-otter{width:44px;height:44px;object-fit:contain;margin-bottom:6px;filter:drop-shadow(0 2px 2px rgba(0,0,0,0.25));}
-.podium-rank{font-family:'Fraunces',Georgia,serif;font-size:20px;font-weight:700;color:var(--forest-dark);line-height:1;}
-.podium-name{font-size:13px;font-weight:500;text-align:center;margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;}
-.podium-value{font-size:11px;color:var(--ink-soft);margin-top:2px;text-align:center;}
+.podium-otter{width:44px;height:44px;object-fit:contain;margin-bottom:6px;filter:drop-shadow(0 2px 2px rgba(0,0,0,0.25));flex-shrink:0;}
+.podium-rank{font-family:'Fraunces',Georgia,serif;font-size:20px;font-weight:700;color:var(--forest-dark);line-height:1;flex-shrink:0;}
+.podium-name{font-size:13px;font-weight:500;text-align:center;margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;flex-shrink:0;}
+.podium-value{font-size:11px;color:var(--ink-soft);margin-top:2px;text-align:center;flex-shrink:0;}
 .podium-base-bar{height:12px;background:var(--line-strong);border-radius:0 0 8px 8px;margin:0 auto;max-width:420px;}
 
 .collapsed-list{margin-top:16px;}
