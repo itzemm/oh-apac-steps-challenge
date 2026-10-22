@@ -34,7 +34,7 @@ export const MASTER_ROSTER = {
   MaxWalkstappen: ['Aniket', 'Jeslin', 'Katrina', 'MinWei', 'Samuel'],
   TheGallopers: ['Shane', 'Jack', 'Naomi', 'Tiere', 'Zhiyang'],
   MarketMovers: ['Sandy', 'Candy', 'Helen', 'JennyS', 'Maria'],
-  TeamFSO: ['Katie', 'Jack', 'Oksana', 'Sandra', 'Sean'],
+  TeamFSO: ['Katie', 'Jack', 'Oksana', 'Callum', 'Sean'],
   TeamTaiwan: ['Frank', 'Anthony', 'Bancroft', 'Coco', 'Vincent'],
   TheStepHustlers: ['AnushkaAnil', 'Ashishkumar', 'Guruprasad', 'Hiren', 'Jeffy'],
   TheWonderWalkers: ['Sharon', 'Angie', 'Carolyn', 'Karis', 'Stephanie'],
