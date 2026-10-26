@@ -1066,9 +1066,10 @@ const App = {
     const cfg = this.state.config;
     if(!cfg.startDate) return 0;
     let sum = 0;
+    const days = record.days || {};
     for(let d=0; d<7; d++){
       const date = this.addDays(cfg.startDate, sel*7 + d);
-      const entry = record.days[date];
+      const entry = days[date];
       if(entry) sum += entry.steps || 0;
     }
     return sum;
@@ -1749,7 +1750,7 @@ const App = {
         for(let d=0; d<7; d++){
           const dayIndex = w*7 + d;
           const date = cfg.startDate ? this.addDays(cfg.startDate, dayIndex) : null;
-          const entry = date ? rec.days[date] : null;
+          const entry = date ? (rec.days || {})[date] : null;
           row.push(entry ? entry.steps : '');
         }
         const weekTotal = this.totalStepsInRange(rec, w);
@@ -3181,7 +3182,7 @@ const App = {
       if(cfg.startDate){
         for(let d=0; d<7; d++){
           const date = this.addDays(cfg.startDate, w*7 + d);
-          const entry = rec.days[date];
+          const entry = (rec.days || {})[date];
           const editKey = `${uid}:${date}`;
           if(this.state.adminEditingDay === editKey){
             dayRows += `<tr><td>${this.formatDate(date)}</td><td>
@@ -3686,7 +3687,7 @@ const App = {
       let dayRows = '';
       for(let d=0; d<7; d++){
         const date = this.addDays(cfg.startDate, m.weekIndex*7 + d);
-        const entry = rec.days[date];
+        const entry = (rec.days || {})[date];
         const dow = new Date(date + 'T00:00:00Z').toLocaleDateString('en-US', { weekday:'short', timeZone:'UTC' });
         const review = dayReviews[date];
         const status = review ? review.status : null;
