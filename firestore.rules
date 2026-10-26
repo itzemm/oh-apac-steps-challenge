@@ -119,7 +119,13 @@ service cloud.firestore {
     // calling Firestore directly.
     match /steps/{uid} {
       allow read: if isSignedIn();
-      allow create: if isSelf(uid) && !('verified' in request.resource.data) && !('dayReviews' in request.resource.data);
+      // Admin also gets create here (matching the update rule below) so
+      // adminSetDaySteps() in index.html can set a day's steps on behalf of
+      // someone who hasn't submitted anything yet, not just update an
+      // existing doc — the one path in this app that can exceed
+      // DAILY_STEP_CAP, for an admin-validated figure above it.
+      allow create: if isAdmin()
+        || (isSelf(uid) && !('verified' in request.resource.data) && !('dayReviews' in request.resource.data));
       allow update: if isAdmin()
         || (isSelf(uid) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['verified', 'dayReviews']));
       // Admin-only, and only meaningful pre-launch (see users/{uid} above) —

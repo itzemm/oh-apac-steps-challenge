@@ -562,6 +562,9 @@ const App = {
     participantMissingOnly: false,
     expandedParticipant: null,
     expandedParticipantTeams: {},
+    // `${uid}:${date}` of the one day row currently open for admin editing
+    // (see adminSetDaySteps()), or null — only one at a time.
+    adminEditingDay: null,
     adminCreateMsg: null,
     photoCategoryOpen: { steps:false, bonus:false },
     expandedBonusPhotoGroups: {},
@@ -790,6 +793,26 @@ const App = {
     batch.set(doc(db,'steps',uid), { name:this.state.mySteps.name, email:this.state.mySteps.email, days:this.state.mySteps.days }, { merge:true });
     batch.update(doc(db,'users',uid), { total, byWeek });
     await this.withRetry(() => batch.commit());
+    if(this.state.users[uid]) Object.assign(this.state.users[uid], { total, byWeek });
+  },
+  // Admin-only: directly sets one participant's step count for one day —
+  // the only path in this app that can exceed DAILY_STEP_CAP, for the rare
+  // case an admin has independently validated a figure above it (saveDay()
+  // enforces the cap unconditionally for a participant's own entry, with no
+  // override). Recomputes total/byWeek off the full days map the same way
+  // saveMySteps() does for a self-entry, so the leaderboard and team totals
+  // stay consistent with this override rather than going stale.
+  async adminSetDaySteps(uid, date, steps){
+    const rec = this.state.allSteps[uid] || { days:{}, hasProof:{} };
+    const entry = { steps, submittedAt: new Date().toISOString(), setByAdmin: true };
+    const days = { ...rec.days, [date]: entry };
+    const { total, byWeek } = this.computeTotals(days);
+    const batch = writeBatch(db);
+    batch.set(doc(db,'steps',uid), { days: { [date]: entry } }, { merge:true });
+    batch.update(doc(db,'users',uid), { total, byWeek });
+    await this.withRetry(() => batch.commit());
+    if(!this.state.allSteps[uid]) this.state.allSteps[uid] = { days:{}, hasProof:{} };
+    this.state.allSteps[uid].days = days;
     if(this.state.users[uid]) Object.assign(this.state.users[uid], { total, byWeek });
   },
   async saveMyProof(weekIndex, dataUrl){
@@ -3159,7 +3182,20 @@ const App = {
         for(let d=0; d<7; d++){
           const date = this.addDays(cfg.startDate, w*7 + d);
           const entry = rec.days[date];
-          dayRows += `<tr><td>${this.formatDate(date)}</td><td>${entry ? entry.steps.toLocaleString() : '—'}</td></tr>`;
+          const editKey = `${uid}:${date}`;
+          if(this.state.adminEditingDay === editKey){
+            dayRows += `<tr><td>${this.formatDate(date)}</td><td>
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                <input type="number" min="0" value="${entry ? entry.steps : ''}" data-role="admin-day-input" style="width:100px;">
+                <button class="btn btn-sm btn-primary" data-role="admin-save-day" data-uid="${uid}" data-date="${date}">Save</button>
+                <button class="btn btn-sm" data-role="admin-cancel-day">Cancel</button>
+              </div>
+            </td></tr>`;
+          } else {
+            dayRows += `<tr><td>${this.formatDate(date)}</td><td>${entry ? entry.steps.toLocaleString() : '—'}
+              <button class="btn btn-sm" data-role="admin-edit-day" data-uid="${uid}" data-date="${date}" title="Manually set this day's steps (admin only — can exceed the normal ${DAILY_STEP_CAP.toLocaleString()}-step cap)">✏️</button>
+            </td></tr>`;
+          }
         }
       }
 
@@ -3832,6 +3868,24 @@ const App = {
     root.querySelectorAll('[data-role="view-user"]').forEach(el => el.addEventListener('click', () => this.toggleParticipantDetail(el.dataset.uid)));
     root.querySelectorAll('[data-role="set-review"]').forEach(el => el.addEventListener('click', () => {
       this.setWeekReviewStatus(el.dataset.uid, Number(el.dataset.week), el.dataset.status || null);
+    }));
+    root.querySelectorAll('[data-role="admin-edit-day"]').forEach(el => el.addEventListener('click', () => {
+      this.state.adminEditingDay = `${el.dataset.uid}:${el.dataset.date}`;
+      this.render();
+    }));
+    root.querySelectorAll('[data-role="admin-cancel-day"]').forEach(el => el.addEventListener('click', () => {
+      this.state.adminEditingDay = null;
+      this.render();
+    }));
+    root.querySelectorAll('[data-role="admin-save-day"]').forEach(el => el.addEventListener('click', async () => {
+      const input = el.closest('td').querySelector('[data-role="admin-day-input"]');
+      const steps = Number(input.value);
+      if(input.value === '' || isNaN(steps) || steps < 0){ alert('Enter a valid step count.'); return; }
+      if(steps > DAILY_STEP_CAP && !confirm(`${steps.toLocaleString()} is above the normal ${DAILY_STEP_CAP.toLocaleString()}-step daily cap. Only confirm if you've independently validated this figure. Continue?`)) return;
+      const { uid, date } = el.dataset;
+      await this.adminSetDaySteps(uid, date, steps);
+      this.state.adminEditingDay = null;
+      this.render();
     }));
 
     root.querySelectorAll('[data-role="modal-close"], [data-role="modal-overlay"]').forEach(el => {
